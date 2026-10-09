@@ -1,104 +1,205 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f5f0e8">
-  <title>时光信箱 · Time Capsule</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>时光信箱 · Time Capsule</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
-  <!-- 顶栏 -->
-  <header class="topbar">
-    <div class="brand">✉️ 时光信箱</div>
-    <nav class="tabs">
-      <button class="tab active" data-view="write">写信</button>
-      <button class="tab" data-view="list">信箱 <span id="badge" class="badge"></span></button>
-    </nav>
-    <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
-  </header>
 
-  <main class="container">
-    <!-- ===== 写信视图 ===== -->
-    <section id="view-write" class="view active">
-      <h1 class="title">写给未来的信</h1>
-      <p class="subtitle">把它锁起来，交给时间保管</p>
+<header class="topbar">
+  <div class="brand">✉️ 时光信箱</div>
+  <nav class="tabs">
+    <button class="tab active" data-view="write">写信</button>
+    <button class="tab" data-view="list">信箱 <span id="badge" class="badge"></span></button>
+    <button class="tab" data-view="trash">回收站 <span id="trash-badge" class="badge"></span></button>
+  </nav>
+  <button id="theme-toggle" class="icon-btn">🌙</button>
+</header>
 
-      <div class="paper">
-        <textarea id="content" maxlength="5000"
-          placeholder="亲爱的未来的我……"></textarea>
-        <div class="counter"><span id="char-count">0</span> / 5000</div>
-      </div>
+<main class="container">
 
-      <div class="form-grid">
-        <label class="field">
-          <span>解锁时间</span>
-          <div class="row">
-            <input type="number" id="days" value="7" min="1" max="3650">
-            <span class="unit">天后</span>
-            <input type="datetime-local" id="exact-date" class="hidden">
-            <button type="button" id="toggle-exact" class="link-btn">精确时间</button>
-          </div>
-        </label>
+<!-- ================= 写信视图 ================= -->
+<section id="view-write" class="view active">
+  <h1 class="title">写给未来的信</h1>
+  <p class="subtitle">把它锁起来，交给时间保管</p>
 
-        <label class="field">
-          <span>解锁密码</span>
-          <div class="row">
-            <input type="password" id="password" placeholder="至少 4 位">
-            <button type="button" id="toggle-pwd" class="link-btn">显示</button>
-          </div>
-          <div class="strength"><i id="strength-bar"></i></div>
-        </label>
+  <!-- 书信纸 -->
+  <div class="letter-paper" id="letter-paper">
+    <!-- 祝福语 -->
+    <div class="blessing" id="blessing-preview">见字如面</div>
 
-        <label class="field">
-          <span>密码提示（可选）</span>
-          <input type="text" id="hint" placeholder="例：我最爱的城市">
-        </label>
+    <!-- 正文 -->
+    <textarea id="content" class="letter-body" maxlength="5000"
+      placeholder="亲爱的……&#10;&#10;写下你想说的话"></textarea>
+    <div class="counter"><span id="char-count">0</span> / 5000</div>
 
-        <label class="field">
-          <span>情绪标签</span>
-          <div class="tags" id="tags">
-            <button type="button" class="tag" data-tag="💌 给未来的自己">💌 给未来的自己</button>
-            <button type="button" class="tag" data-tag="🎂 纪念日">🎂 纪念日</button>
-            <button type="button" class="tag" data-tag="🌱 目标">🌱 目标</button>
-            <button type="button" class="tag" data-tag="💭 心情">💭 心情</button>
-          </div>
-        </label>
-      </div>
+    <!-- 图片区（独立板块，不破坏格式） -->
+    <div class="image-zone" id="image-zone">
+      <div class="image-strip" id="image-strip"></div>
+      <button type="button" id="add-image" class="add-image-btn" title="插入图片">＋ 图片</button>
+      <input type="file" id="image-input" accept="image/*" multiple hidden>
+    </div>
 
-      <button id="lock-btn" class="primary-btn">🔒 上锁封存</button>
-    </section>
-
-    <!-- ===== 信箱视图 ===== -->
-    <section id="view-list" class="view">
-      <div class="list-header">
-        <h1 class="title">我的信箱</h1>
-        <div class="list-actions">
-          <button id="export-btn" class="ghost-btn">导出备份</button>
-          <button id="import-btn" class="ghost-btn">导入备份</button>
-          <input type="file" id="import-file" accept=".json" hidden>
-        </div>
-      </div>
-      <div id="letters" class="letters"></div>
-      <div id="empty" class="empty">
-        <div class="empty-icon">📭</div>
-        <p>还没有信，去写一封吧</p>
-      </div>
-    </section>
-  </main>
-
-  <!-- ===== 解锁弹窗 ===== -->
-  <div id="modal" class="modal hidden">
-    <div class="modal-card">
-      <button class="modal-close" id="modal-close">×</button>
-      <div id="modal-body"></div>
+    <!-- 落款 -->
+    <div class="signature-zone">
+      <input id="signature" class="signature-input" placeholder="落款：你的名字" maxlength="20">
+      <div class="signature-date" id="signature-date"></div>
     </div>
   </div>
 
-  <!-- Toast -->
-  <div id="toast" class="toast"></div>
+  <!-- 祝福语选择 -->
+  <div class="form-section">
+    <div class="section-label">祝福语</div>
+    <div class="chips" id="blessing-chips">
+      <button type="button" class="chip active" data-b="见字如面">见字如面</button>
+      <button type="button" class="chip" data-b="展信佳">展信佳</button>
+      <button type="button" class="chip" data-b="顺颂时祺">顺颂时祺</button>
+      <button type="button" class="chip" data-b="愿你安好">愿你安好</button>
+      <button type="button" class="chip" data-b="未来可期">未来可期</button>
+      <button type="button" class="chip" data-b="">留空</button>
+      <input id="blessing-custom" class="chip-input" placeholder="自定义…" maxlength="20">
+    </div>
+  </div>
 
-  <script src="app.js"></script>
+  <!-- 情绪标签 -->
+  <div class="form-section">
+    <div class="section-label">情绪标签 <button class="link-btn" id="add-tag-btn">＋ 新建</button></div>
+    <div class="chips" id="tag-chips"></div>
+  </div>
+
+  <!-- 参数 -->
+  <div class="form-grid">
+    <label class="field">
+      <span>解锁时间</span>
+      <div class="row">
+        <input type="number" id="days" value="7" min="1" max="3650">
+        <span class="unit">天后</span>
+        <input type="datetime-local" id="exact-date" class="hidden">
+        <button type="button" id="toggle-exact" class="link-btn">精确时间</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>解锁密码</span>
+      <div class="row">
+        <input type="password" id="password" placeholder="至少 4 位">
+        <button type="button" id="toggle-pwd" class="link-btn">显示</button>
+      </div>
+      <div class="strength"><i id="strength-bar"></i></div>
+    </label>
+
+    <label class="field">
+      <span>密码提示（可选）</span>
+      <input type="text" id="hint" placeholder="例：我最爱的城市">
+    </label>
+  </div>
+
+  <!-- 双人信件开关（角落） -->
+  <div class="dual-toggle">
+    <label class="switch">
+      <input type="checkbox" id="dual-mode">
+      <span class="slider"></span>
+    </label>
+    <span class="dual-label">双人信件 <small>（两人密码都正确才可打开）</small></span>
+  </div>
+
+  <div id="dual-fields" class="dual-fields hidden">
+    <div class="form-grid">
+      <label class="field">
+        <span>第二人密码</span>
+        <input type="password" id="password2" placeholder="第二人密码">
+      </label>
+      <label class="field">
+        <span>第二人提示（可选）</span>
+        <input type="text" id="hint2" placeholder="给第二人的提示">
+      </label>
+    </div>
+  </div>
+
+  <button id="lock-btn" class="primary-btn">🔒 上锁封存</button>
+</section>
+
+<!-- ================= 信箱视图 ================= -->
+<section id="view-list" class="view">
+  <div class="list-header">
+    <h1 class="title">我的信箱</h1>
+    <div class="list-actions">
+      <button id="export-btn" class="ghost-btn">导出</button>
+      <button id="import-btn" class="ghost-btn">导入</button>
+      <input type="file" id="import-file" accept=".json" hidden>
+    </div>
+  </div>
+
+  <!-- 搜索 + 筛选 -->
+  <div class="filter-bar">
+    <input id="search" class="search-input" placeholder="🔍 搜索提示 / 标签 / 落款">
+    <select id="filter-tag" class="select"><option value="">全部标签</option></select>
+    <select id="filter-status" class="select">
+      <option value="">全部状态</option>
+      <option value="locked">封存中</option>
+      <option value="ready">可打开</option>
+    </select>
+    <select id="filter-sort" class="select">
+      <option value="unlock-asc">解锁时间 ↑</option>
+      <option value="unlock-desc">解锁时间 ↓</option>
+      <option value="created-desc">创建时间 ↓</option>
+    </select>
+  </div>
+
+  <!-- 批量操作栏 -->
+  <div id="bulk-bar" class="bulk-bar hidden">
+    <span><b id="bulk-count">0</b> 封已选</span>
+    <button class="ghost-btn" id="bulk-delete">删除</button>
+    <button class="ghost-btn" id="bulk-cancel">取消</button>
+  </div>
+
+  <div id="letters" class="letters"></div>
+  <div id="empty" class="empty">
+    <div class="empty-icon">📭</div><p>还没有信，去写一封吧</p>
+  </div>
+</section>
+
+<!-- ================= 回收站视图 ================= -->
+<section id="view-trash" class="view">
+  <div class="list-header">
+    <h1 class="title">回收站</h1>
+    <button class="ghost-btn" id="empty-trash">清空回收站</button>
+  </div>
+  <p class="subtitle">删除的信件可在这里恢复，清空后无法找回。</p>
+  <div id="trash-list" class="letters"></div>
+  <div id="trash-empty" class="empty">
+    <div class="empty-icon">🗑️</div><p>回收站是空的</p>
+  </div>
+</section>
+
+</main>
+
+<!-- 弹窗 -->
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <button class="modal-close" id="modal-close">×</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- 翻牌倒计时弹窗 -->
+<div id="flip-modal" class="modal hidden">
+  <div class="modal-card flip-card">
+    <button class="modal-close" id="flip-close">×</button>
+    <h2 class="flip-title">🔒 时间未到</h2>
+    <p class="m-sub" id="flip-sub"></p>
+    <div class="flip-clock" id="flip-clock"></div>
+    <p class="m-sub" id="flip-hint"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
 </body>
 </html>
