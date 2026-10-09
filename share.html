@@ -87,24 +87,64 @@ if (!raw) {
           <button class="ghost-btn" id="sopen" style="width:100%;margin-top:10px">提前解锁</button>
         </div>
       `;
-      startShareCountdown(data.unlockAt);
+      startShareCountdown(data.unlockAt, data);
       bindOpen(data);
     } else {
+      // 已到解锁时间：自动解密展示，无需密码
       $('#share-meta').textContent = `写于 ${fmtDate(data.createdAt)}`;
-      $('#share-body').innerHTML = `
-        <div class="field" style="text-align:left;margin-top:20px">
-          <span>输入密码查看内容</span>
-          <input type="password" id="spwd" placeholder="密码" autofocus>
-        </div>
-        <div id="serr"></div>
-        <button class="primary-btn" style="margin-top:14px" id="sopen">打开信件</button>
-      `;
-      bindOpen(data);
+      $('#share-body').innerHTML = `<div style="text-align:center;padding:30px 0;color:var(--muted)">正在打开…</div>`;
+      autoDecryptShare(data);
     }
   }
 }
 
-function startShareCountdown(unlockAt) {
+/* 已到时间：自动解密展示 */
+async function autoDecryptShare(data) {
+  try {
+    let payload;
+    if (data.autoEnc && data.timeKey) {
+      const text = await decrypt(data.autoEnc, data.timeKey);
+      payload = JSON.parse(text);
+    } else {
+      // 兼容旧数据：没有 autoEnc，显示密码输入
+      showSharePassword(data);
+      return;
+    }
+    renderShareContent(payload);
+  } catch (e) {
+    // 解密失败，回退到密码输入
+    showSharePassword(data);
+  }
+}
+
+function showSharePassword(data) {
+  $('#share-body').innerHTML = `
+    <div class="field" style="text-align:left;margin-top:20px">
+      <span>输入密码查看内容</span>
+      <input type="password" id="spwd" placeholder="密码" autofocus>
+    </div>
+    <div id="serr"></div>
+    <button class="primary-btn" style="margin-top:14px" id="sopen">打开信件</button>
+  `;
+  bindOpen(data);
+}
+
+function renderShareContent(payload) {
+  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const parasHtml = paragraphs
+    .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
+  $('#share-body').innerHTML = `
+    <div class="letter-content" style="text-align:left">
+      ${payload.blessing?`<div class="content-blessing">${escapeHtml(payload.blessing)}</div>`:''}
+      <div>${parasHtml}</div>
+      ${(payload.images||[]).map(s=>`<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
+      <div class="content-sign">—— ${escapeHtml(payload.signature||'佚名')}</div>
+      <div class="content-date">${fmtDate(payload.writtenAt)}</div>
+    </div>
+  `;
+}
+
+function startShareCountdown(unlockAt, data) {
   const box = $('#share-countdown');
   const cache = {};
   const t = setInterval(render, 1000);
@@ -112,7 +152,8 @@ function startShareCountdown(unlockAt) {
     const ms = unlockAt - Date.now();
     if (ms <= 0) {
       clearInterval(t);
-      box.innerHTML = '<div style="color:#27ae60">✨ 已到时间，请刷新</div>';
+      box.innerHTML = '<div style="color:#27ae60">✨ 已到时间，正在打开…</div>';
+      setTimeout(() => autoDecryptShare(data), 800);
       return;
     }
     const s = Math.floor(ms/1000);
@@ -165,18 +206,7 @@ function bindOpen(data) {
     try {
       const text = await decrypt(data.enc, pwd);
       const payload = JSON.parse(text);
-      const paragraphs = payload.paragraphs || [payload.content || ''];
-      const parasHtml = paragraphs
-        .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
-      $('#share-body').innerHTML = `
-        <div class="letter-content" style="text-align:left">
-          ${payload.blessing?`<div class="content-blessing">${escapeHtml(payload.blessing)}</div>`:''}
-          <div>${parasHtml}</div>
-          ${(payload.images||[]).map(s=>`<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
-          <div class="content-sign">—— ${escapeHtml(payload.signature||'佚名')}</div>
-          <div class="content-date">${fmtDate(payload.writtenAt)}</div>
-        </div>
-      `;
+      renderShareContent(payload);
     } catch(e) {
       btn.disabled = false; btn.textContent='打开信件';
       $('#serr').innerHTML = '<div class="error-msg">密码错误</div>';
