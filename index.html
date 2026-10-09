@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f5f0e8">
+  <title>时光信箱 · Time Capsule</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">✉️ 时光信箱</div>
+    <nav class="tabs">
+      <button class="tab active" data-view="write">写信</button>
+      <button class="tab" data-view="list">信箱 <span id="badge" class="badge"></span></button>
+    </nav>
+    <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
+  </header>
+
+  <main class="container">
+    <!-- ===== 写信视图 ===== -->
+    <section id="view-write" class="view active">
+      <h1 class="title">写给未来的信</h1>
+      <p class="subtitle">把它锁起来，交给时间保管</p>
+
+      <div class="paper">
+        <textarea id="content" maxlength="5000"
+          placeholder="亲爱的未来的我……"></textarea>
+        <div class="counter"><span id="char-count">0</span> / 5000</div>
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>解锁时间</span>
+          <div class="row">
+            <input type="number" id="days" value="7" min="1" max="3650">
+            <span class="unit">天后</span>
+            <input type="datetime-local" id="exact-date" class="hidden">
+            <button type="button" id="toggle-exact" class="link-btn">精确时间</button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>解锁密码</span>
+          <div class="row">
+            <input type="password" id="password" placeholder="至少 4 位">
+            <button type="button" id="toggle-pwd" class="link-btn">显示</button>
+          </div>
+          <div class="strength"><i id="strength-bar"></i></div>
+        </label>
+
+        <label class="field">
+          <span>密码提示（可选）</span>
+          <input type="text" id="hint" placeholder="例：我最爱的城市">
+        </label>
+
+        <label class="field">
+          <span>情绪标签</span>
+          <div class="tags" id="tags">
+            <button type="button" class="tag" data-tag="💌 给未来的自己">💌 给未来的自己</button>
+            <button type="button" class="tag" data-tag="🎂 纪念日">🎂 纪念日</button>
+            <button type="button" class="tag" data-tag="🌱 目标">🌱 目标</button>
+            <button type="button" class="tag" data-tag="💭 心情">💭 心情</button>
+          </div>
+        </label>
+      </div>
+
+      <button id="lock-btn" class="primary-btn">🔒 上锁封存</button>
+    </section>
+
+    <!-- ===== 信箱视图 ===== -->
+    <section id="view-list" class="view">
+      <div class="list-header">
+        <h1 class="title">我的信箱</h1>
+        <div class="list-actions">
+          <button id="export-btn" class="ghost-btn">导出备份</button>
+          <button id="import-btn" class="ghost-btn">导入备份</button>
+          <input type="file" id="import-file" accept=".json" hidden>
+        </div>
+      </div>
+      <div id="letters" class="letters"></div>
+      <div id="empty" class="empty">
+        <div class="empty-icon">📭</div>
+        <p>还没有信，去写一封吧</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== 解锁弹窗 ===== -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close">×</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
