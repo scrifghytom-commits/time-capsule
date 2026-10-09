@@ -83,6 +83,11 @@ async function decrypt(payload, password) {
 }
 function combineDualKey(p1, p2) { return p1 + '||DUAL||' + p2; }
 
+/* 时间密钥：由信件 id + createdAt 派生，用于到期自动解密 */
+function timeKeyFor(item) {
+  return 'TIMEKEY::' + item.id + '::' + item.createdAt;
+}
+
 /* ================= 主题 ================= */
 (function(){
   const saved = localStorage.getItem('theme') || 'light';
@@ -337,18 +342,28 @@ $('#lock-btn').onclick = async () => {
       signature,
       writtenAt: Date.now()
     };
+
+    // 先生成 id 和 createdAt，用于派生时间密钥
+    const id = crypto.randomUUID();
+    const createdAt = Date.now();
+
+    // 用户密码加密（用于提前打开）
     const enc = await encrypt(JSON.stringify(payload), key);
 
+    // 时间密钥加密（用于到期自动解锁）
+    const autoEnc = await encrypt(JSON.stringify(payload), 'TIMEKEY::' + id + '::' + createdAt);
+
     const item = {
-      id: crypto.randomUUID(),
-      createdAt: Date.now(),
+      id,
+      createdAt,
       unlockAt,
       hint,
       tag: [...selectedTags].join(','),
       isDual,
       recipient: null,
       pinned: false,
-      enc
+      enc,
+      autoEnc
     };
     if (isDual) item.hint2 = $('#hint2').value.trim();
     store.add(item);
@@ -616,9 +631,27 @@ function openLetter(id) {
   else autoOpenLetter(item);
 }
 
-/* 已到时间：进入密码验证（内容加密，仍需密码解密） */
-function autoOpenLetter(item) {
+/* 已到时间：自动解密展示，无需密码 */
+async function autoOpenLetter(item) {
   $('#modal').classList.remove('hidden');
+  $('#modal-body').innerHTML = `
+    <h2>💌 ${item.isDual?'双人信件':'一封信'}</h2>
+    <p class="m-sub">写于 ${fmtDate(item.createdAt)} · 已到解锁时间</p>
+    <div id="err-box"></div>
+    <div style="text-align:center;padding:30px 0;color:var(--muted)">正在打开…</div>
+  `;
+  try {
+    const text = await decrypt(item.autoEnc, timeKeyFor(item));
+    const payload = JSON.parse(text);
+    playEnvelopeAnimation(payload, item);
+  } catch (e) {
+    // 兼容旧数据：没有 autoEnc 时回退到密码验证
+    showPasswordFallback(item);
+  }
+}
+
+/* 兼容旧数据：显示密码输入 */
+function showPasswordFallback(item) {
   $('#modal-body').innerHTML = `
     <h2>💌 ${item.isDual?'双人信件':'一封信'}</h2>
     <p class="m-sub">写于 ${fmtDate(item.createdAt)} · 已到解锁时间</p>
@@ -801,7 +834,9 @@ async function shareLetter(id) {
     unlockAt: item.unlockAt,
     hint: item.hint,
     enc: item.enc,
-    createdAt: item.createdAt
+    autoEnc: item.autoEnc,
+    createdAt: item.createdAt,
+    timeKey: timeKeyFor(item)
   };
   const packed = b64uEncode(JSON.stringify(data));
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
@@ -875,6 +910,11 @@ function renderFlipClock(item) {
   if (ms <= 0) {
     clearInterval(flipTimer);
     clock.innerHTML = '<div style="font-size:20px;color:#27ae60;padding:16px">✨ 可以打开了，请关闭后查看</div>';
+    // 自动关闭并打开信件
+    setTimeout(() => {
+      $('#flip-modal').classList.add('hidden');
+      autoOpenLetter(item);
+    }, 1200);
     return;
   }
   const s = Math.floor(ms/1000);
