@@ -34,9 +34,10 @@
     <div class="blessing" id="blessing-preview">见字如面</div>
 
     <!-- 正文 -->
-    <textarea id="content" class="letter-body" maxlength="5000"
-      placeholder="亲爱的……&#10;&#10;写下你想说的话"></textarea>
-    <div class="counter"><span id="char-count">0</span> / 5000</div>
+    <!-- 原 textarea 替换为下面内容 -->
+<div class="letter-editor" id="letter-editor" contenteditable="true"
+     data-placeholder="亲爱的……&#10;&#10;写下你想说的话"></div>
+<div class="counter"><span id="char-count">0</span> / 5000</div>
 
     <!-- 图片区（独立板块，不破坏格式） -->
     <div class="image-zone" id="image-zone">
@@ -197,7 +198,7 @@
     <p class="m-sub" id="flip-hint"></p>
   </div>
 </div>
-
+<div id="print-area" class="print-area"></div>
 <div id="toast" class="toast"></div>
 
 <script src="app.js"></script>
