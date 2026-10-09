@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>有人给你写了一封信</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+  .share-wrap{max-width:560px;width:100%}
+</style>
+</head>
+<body>
+<div class="share-wrap">
+  <div class="letter-paper" style="text-align:center">
+    <h1 class="title">💌 有人给你写了一封信</h1>
+    <p class="subtitle" id="share-meta">加载中…</p>
+    <div id="share-body"></div>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+
+// 复用 app.js 中的加解密（简版内联）
+async function deriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt, iterations:150000, hash:'SHA-256' },
+    km, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+async function decrypt(payload, password) {
+  const key = await deriveKey(password, new Uint8Array(payload.salt));
+  const buf = await crypto.subtle.decrypt(
+    { name:'AES-GCM', iv:new Uint8Array(payload.iv) },
+    key, new Uint8Array(payload.data));
+  return new TextDecoder().decode(buf);
+}
+function fmtDate(ts){const d=new Date(ts);return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;}
+
+const hash = location.hash.slice(1);
+if (!hash) {
+  $('#share-body').innerHTML = '<p class="error-msg">链接无效</p>';
+} else {
+  let data;
+  try { data = JSON.parse(decodeURIComponent(escape(atob(hash)))); }
+  catch(e){ $('#share-body').innerHTML = '<p class="error-msg">链接已损坏</p>'; }
+
+  if (data) {
+    const left = data.unlockAt - Date.now();
+    if (left > 0) {
+      const d = Math.ceil(left/86400000);
+      $('#share-meta').textContent = `${fmtDate(data.unlockAt)} 才能打开（约 ${d} 天后）`;
+      $('#share-body').innerHTML = `<div style="font-size:48px;margin:30px 0">🔒</div>
+        <p class="m-sub">请到那天再来</p>
+        ${data.hint?`<p class="m-sub">提示：${data.hint}</p>`:''}`;
+    } else {
+      $('#share-meta').textContent = `写于 ${fmtDate(data.createdAt)}`;
+      $('#share-body').innerHTML = `
+        <div class="field" style="text-align:left;margin-top:20px">
+          <span>输入密码打开</span>
+          <input type="password" id="spwd" placeholder="密码" autofocus>
+        </div>
+        <div id="serr"></div>
+        <button class="primary-btn" style="margin-top:14px" id="sopen">打开信件</button>
+      `;
+      const tryOpen = async () => {
+        const pwd = $('#spwd').value;
+        if (!pwd) return;
+        const btn = $('#sopen'); btn.disabled = true; btn.textContent='解密中…';
+        try {
+          const text = await decrypt(data.enc, pwd);
+          const payload = JSON.parse(text);
+          $('#share-body').innerHTML = `
+            <div class="letter-content" style="text-align:left">
+              ${payload.blessing?`<div class="content-blessing">${payload.blessing}</div>`:''}
+              <div style="white-space:pre-wrap">${escapeHtml(payload.content)}</div>
+              ${(payload.images||[]).map(s=>`<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
+              <div class="content-sign">—— ${escapeHtml(payload.signature||'佚名')}</div>
+              <div class="content-date">${fmtDate(payload.writtenAt)}</div>
+            </div>
+          `;
+        } catch(e) {
+          btn.disabled = false; btn.textContent='打开信件';
+          $('#serr').innerHTML = '<div class="error-msg">密码错误</div>';
+          setTimeout(()=>$('#serr').innerHTML='',2600);
+        }
+      };
+      $('#sopen').onclick = tryOpen;
+      $('#spwd').addEventListener('keydown', e => { if (e.key==='Enter') tryOpen(); });
+    }
+  }
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+</script>
+</body>
+</html>
