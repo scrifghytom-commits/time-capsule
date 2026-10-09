@@ -21,7 +21,7 @@
 <script>
 const $ = s => document.querySelector(s);
 
-// 复用 app.js 中的加解密（简版内联）
+/* ---- 加密 ---- */
 async function deriveKey(password, salt) {
   const enc = new TextEncoder();
   const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
@@ -36,62 +36,156 @@ async function decrypt(payload, password) {
     key, new Uint8Array(payload.data));
   return new TextDecoder().decode(buf);
 }
-function fmtDate(ts){const d=new Date(ts);return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;}
+function fmtDate(ts){
+  const d=new Date(ts);
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
-const hash = location.hash.slice(1);
-if (!hash) {
-  $('#share-body').innerHTML = '<p class="error-msg">链接无效</p>';
+/* ---- Base64URL 解码 ---- */
+function b64uDecode(s) {
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+/* ---- 解析 hash ---- */
+let raw = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+try { raw = decodeURIComponent(raw); } catch(e){}
+
+if (!raw) {
+  $('#share-meta').textContent = '';
+  $('#share-body').innerHTML = '<p class="error-msg">链接无效或已损坏</p>';
 } else {
   let data;
-  try { data = JSON.parse(decodeURIComponent(escape(atob(hash)))); }
-  catch(e){ $('#share-body').innerHTML = '<p class="error-msg">链接已损坏</p>'; }
+  try {
+    data = JSON.parse(b64uDecode(raw));
+  } catch(e) {
+    $('#share-meta').textContent = '';
+    $('#share-body').innerHTML = '<p class="error-msg">链接已损坏</p>';
+  }
 
   if (data) {
     const left = data.unlockAt - Date.now();
     if (left > 0) {
-      const d = Math.ceil(left/86400000);
-      $('#share-meta').textContent = `${fmtDate(data.unlockAt)} 才能打开（约 ${d} 天后）`;
-      $('#share-body').innerHTML = `<div style="font-size:48px;margin:30px 0">🔒</div>
-        <p class="m-sub">请到那天再来</p>
-        ${data.hint?`<p class="m-sub">提示：${data.hint}</p>`:''}`;
+      $('#share-meta').textContent = `这封信将在 ${fmtDate(data.unlockAt)} 解锁`;
+      $('#share-body').innerHTML = `
+        <div style="font-size:48px;margin:20px 0">🔒</div>
+        <div id="share-countdown" class="flip-clock" style="margin:16px 0"></div>
+        ${data.hint?`<p class="m-sub">提示：${escapeHtml(data.hint)}</p>`:''}
+        <div style="margin-top:18px;text-align:left;border-top:1px dashed var(--line);padding-top:16px">
+          <p class="m-sub" style="margin-bottom:8px">🔑 想提前打开？输入密码</p>
+          <div class="field">
+            <input type="password" id="spwd" placeholder="密码">
+          </div>
+          <div id="serr"></div>
+          <button class="ghost-btn" id="sopen" style="width:100%;margin-top:10px">提前解锁</button>
+        </div>
+      `;
+      startShareCountdown(data.unlockAt);
+      bindOpen(data);
     } else {
       $('#share-meta').textContent = `写于 ${fmtDate(data.createdAt)}`;
       $('#share-body').innerHTML = `
         <div class="field" style="text-align:left;margin-top:20px">
-          <span>输入密码打开</span>
+          <span>输入密码查看内容</span>
           <input type="password" id="spwd" placeholder="密码" autofocus>
         </div>
         <div id="serr"></div>
         <button class="primary-btn" style="margin-top:14px" id="sopen">打开信件</button>
       `;
-      const tryOpen = async () => {
-        const pwd = $('#spwd').value;
-        if (!pwd) return;
-        const btn = $('#sopen'); btn.disabled = true; btn.textContent='解密中…';
-        try {
-          const text = await decrypt(data.enc, pwd);
-          const payload = JSON.parse(text);
-          $('#share-body').innerHTML = `
-            <div class="letter-content" style="text-align:left">
-              ${payload.blessing?`<div class="content-blessing">${payload.blessing}</div>`:''}
-              <div style="white-space:pre-wrap">${escapeHtml(payload.content)}</div>
-              ${(payload.images||[]).map(s=>`<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
-              <div class="content-sign">—— ${escapeHtml(payload.signature||'佚名')}</div>
-              <div class="content-date">${fmtDate(payload.writtenAt)}</div>
-            </div>
-          `;
-        } catch(e) {
-          btn.disabled = false; btn.textContent='打开信件';
-          $('#serr').innerHTML = '<div class="error-msg">密码错误</div>';
-          setTimeout(()=>$('#serr').innerHTML='',2600);
-        }
-      };
-      $('#sopen').onclick = tryOpen;
-      $('#spwd').addEventListener('keydown', e => { if (e.key==='Enter') tryOpen(); });
+      bindOpen(data);
     }
   }
 }
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function startShareCountdown(unlockAt) {
+  const box = $('#share-countdown');
+  const cache = {};
+  const t = setInterval(render, 1000);
+  function render() {
+    const ms = unlockAt - Date.now();
+    if (ms <= 0) {
+      clearInterval(t);
+      box.innerHTML = '<div style="color:#27ae60">✨ 已到时间，请刷新</div>';
+      return;
+    }
+    const s = Math.floor(ms/1000);
+    const units = [
+      {k:'d',v:Math.floor(s/86400),l:'天'},
+      {k:'h',v:Math.floor(s%86400/3600),l:'时'},
+      {k:'m',v:Math.floor(s%3600/60),l:'分'},
+      {k:'s',v:s%60,l:'秒'}
+    ];
+    if (!box.dataset.built) {
+      box.innerHTML = units.map(u => `
+        <div class="flip-unit">
+          <span class="flip-digits" data-k="${u.k}"></span>
+          <span class="lab">${u.l}</span>
+        </div>`).join('');
+      box.dataset.built = '1';
+    }
+    units.forEach(u => {
+      const str = String(u.v).padStart(2,'0');
+      const prev = cache[u.k] || ['',''];
+      const dbox = box.querySelector(`[data-k="${u.k}"]`);
+      str.split('').forEach((ch,i) => {
+        let el = dbox.children[i];
+        if (!el) {
+          el = document.createElement('span');
+          el.className='flip-digit';
+          el.innerHTML='<span class="d"></span>';
+          dbox.appendChild(el);
+        }
+        const d = el.querySelector('.d');
+        if (prev[i] !== ch) {
+          d.textContent = ch;
+          el.classList.remove('flip'); void el.offsetWidth; el.classList.add('flip');
+        }
+      });
+      cache[u.k] = str.split('');
+    });
+  }
+  render();
+}
+
+function bindOpen(data) {
+  const open = async () => {
+    const pwd = $('#spwd').value;
+    if (!pwd) {
+      $('#serr').innerHTML = '<div class="error-msg">请输入密码</div>';
+      setTimeout(()=>$('#serr').innerHTML='',2600); return;
+    }
+    const btn = $('#sopen'); btn.disabled = true; btn.textContent='解密中…';
+    try {
+      const text = await decrypt(data.enc, pwd);
+      const payload = JSON.parse(text);
+      const paragraphs = payload.paragraphs || [payload.content || ''];
+      const parasHtml = paragraphs
+        .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
+      $('#share-body').innerHTML = `
+        <div class="letter-content" style="text-align:left">
+          ${payload.blessing?`<div class="content-blessing">${escapeHtml(payload.blessing)}</div>`:''}
+          <div>${parasHtml}</div>
+          ${(payload.images||[]).map(s=>`<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
+          <div class="content-sign">—— ${escapeHtml(payload.signature||'佚名')}</div>
+          <div class="content-date">${fmtDate(payload.writtenAt)}</div>
+        </div>
+      `;
+    } catch(e) {
+      btn.disabled = false; btn.textContent='打开信件';
+      $('#serr').innerHTML = '<div class="error-msg">密码错误</div>';
+      setTimeout(()=>$('#serr').innerHTML='',2600);
+    }
+  };
+  $('#sopen').onclick = open;
+  $('#spwd').addEventListener('keydown', e => { if (e.key==='Enter') open(); });
+}
 </script>
 </body>
 </html>
