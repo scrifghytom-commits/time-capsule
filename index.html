@@ -6,7 +6,6 @@
 <title>时光信箱 · Time Capsule</title>
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
@@ -30,16 +29,14 @@
 
   <!-- 书信纸 -->
   <div class="letter-paper" id="letter-paper">
-    <!-- 祝福语 -->
     <div class="blessing" id="blessing-preview">见字如面</div>
 
-    <!-- 正文 -->
-    <!-- 原 textarea 替换为下面内容 -->
-<div class="letter-editor" id="letter-editor" contenteditable="true"
-     data-placeholder="亲爱的……&#10;&#10;写下你想说的话"></div>
-<div class="counter"><span id="char-count">0</span> / 5000</div>
+    <!-- 正文编辑器 -->
+    <div class="letter-editor" id="letter-editor" contenteditable="true"
+         data-placeholder="亲爱的……&#10;&#10;写下你想说的话"></div>
+    <div class="counter"><span id="char-count">0</span> / 5000</div>
 
-    <!-- 图片区（独立板块，不破坏格式） -->
+    <!-- 图片区（独立板块） -->
     <div class="image-zone" id="image-zone">
       <div class="image-strip" id="image-strip"></div>
       <button type="button" id="add-image" class="add-image-btn" title="插入图片">＋ 图片</button>
@@ -53,7 +50,7 @@
     </div>
   </div>
 
-  <!-- 祝福语选择 -->
+  <!-- 祝福语 -->
   <div class="form-section">
     <div class="section-label">祝福语</div>
     <div class="chips" id="blessing-chips">
@@ -86,7 +83,7 @@
     </label>
 
     <label class="field">
-      <span>解锁密码</span>
+      <span>解锁密码（必填，用于提前打开）</span>
       <div class="row">
         <input type="password" id="password" placeholder="至少 4 位">
         <button type="button" id="toggle-pwd" class="link-btn">显示</button>
@@ -100,13 +97,13 @@
     </label>
   </div>
 
-  <!-- 双人信件开关（角落） -->
+  <!-- 双人信件开关 -->
   <div class="dual-toggle">
     <label class="switch">
       <input type="checkbox" id="dual-mode">
       <span class="slider"></span>
     </label>
-    <span class="dual-label">双人信件 <small>（两人密码都正确才可打开）</small></span>
+    <span class="dual-label">双人信件 <small>（两人密码都正确才可提前打开）</small></span>
   </div>
 
   <div id="dual-fields" class="dual-fields hidden">
@@ -136,7 +133,6 @@
     </div>
   </div>
 
-  <!-- 搜索 + 筛选 -->
   <div class="filter-bar">
     <input id="search" class="search-input" placeholder="🔍 搜索提示 / 标签 / 落款">
     <select id="filter-tag" class="select"><option value="">全部标签</option></select>
@@ -152,7 +148,6 @@
     </select>
   </div>
 
-  <!-- 批量操作栏 -->
   <div id="bulk-bar" class="bulk-bar hidden">
     <span><b id="bulk-count">0</b> 封已选</span>
     <button class="ghost-btn" id="bulk-delete">删除</button>
@@ -198,7 +193,10 @@
     <p class="m-sub" id="flip-hint"></p>
   </div>
 </div>
+
+<!-- 打印 PDF 专用区域 -->
 <div id="print-area" class="print-area"></div>
+
 <div id="toast" class="toast"></div>
 
 <script src="app.js"></script>
