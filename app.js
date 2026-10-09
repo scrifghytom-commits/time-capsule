@@ -41,6 +41,22 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+/* Base64URL 编解码 */
+function b64uEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64uDecode(s) {
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 /* ================= 加密 ================= */
 async function deriveKey(password, salt) {
   const enc = new TextEncoder();
@@ -65,7 +81,6 @@ async function decrypt(payload, password) {
   );
   return new TextDecoder().decode(buf);
 }
-// 双人：用两个密码拼接加密（两个都对才能解密）
 function combineDualKey(p1, p2) { return p1 + '||DUAL||' + p2; }
 
 /* ================= 主题 ================= */
@@ -91,7 +106,7 @@ function switchView(name) {
   if (name === 'trash') renderTrash();
 }
 
-/* ================= 写信：祝福语 ================= */
+/* ================= 祝福语 ================= */
 let selectedBlessing = '见字如面';
 $$('#blessing-chips .chip').forEach(c => c.onclick = () => {
   $$('#blessing-chips .chip').forEach(x => x.classList.remove('active'));
@@ -113,7 +128,7 @@ $('#blessing-custom').addEventListener('input', e => {
   }
 });
 
-/* ================= 写信：标签 ================= */
+/* ================= 标签 ================= */
 let selectedTags = new Set();
 const tagStore = {
   get: () => JSON.parse(localStorage.getItem('tc_tags') || '["💌 给未来的自己","🎂 纪念日","🌱 目标","💭 心情"]'),
@@ -145,8 +160,8 @@ $('#add-tag-btn').onclick = () => {
 };
 renderTagChips();
 
-/* ================= 写信：图片 ================= */
-let images = []; // base64 数组
+/* ================= 图片 ================= */
+let images = [];
 $('#add-image').onclick = () => $('#image-input').click();
 $('#image-input').onchange = e => {
   const files = [...e.target.files];
@@ -167,21 +182,52 @@ function renderImages() {
   });
 }
 
-/* ================= 写信：日期/字数/强度/双人 ================= */
-$('#content').addEventListener('input', e => {
-  $('#char-count').textContent = e.target.value.length;
+/* ================= 正文编辑器 ================= */
+const editor = $('#letter-editor');
+
+function editorGetText() {
+  const paras = editor.querySelectorAll('p');
+  if (paras.length) return [...paras].map(p => p.textContent).join('\n');
+  return editor.innerText;
+}
+function editorSetText(text) {
+  editor.innerHTML = '';
+  const lines = String(text || '').split(/\n/);
+  lines.forEach(l => {
+    const p = document.createElement('p');
+    p.textContent = l || '\u00A0';
+    editor.appendChild(p);
+  });
+}
+editor.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    const p = document.createElement('p');
+    p.innerHTML = '<br>';
+    range.deleteContents();
+    range.insertNode(p);
+    range.setStart(p, 0); range.collapse(true);
+    sel.removeAllRanges(); sel.addRange(range);
+  }
+});
+editor.addEventListener('input', () => {
+  const len = editorGetText().replace(/\u00A0/g,'').length;
+  $('#char-count').textContent = len;
   autoSaveDraft();
 });
-$('#signature').addEventListener('input', autoSaveDraft);
-$('#blessing-custom').addEventListener('input', autoSaveDraft);
 
-// 落款日期显示当前
+/* ================= 落款日期 ================= */
 function updateSignatureDate() {
   const now = new Date();
-  $('#signature-date').textContent = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
+  $('#signature-date').textContent =
+    `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
 }
 updateSignatureDate();
 
+/* ================= 参数交互 ================= */
 $('#toggle-exact').onclick = () => {
   const ex = $('#exact-date'), hidden = ex.classList.contains('hidden');
   if (hidden) {
@@ -215,13 +261,13 @@ $('#dual-mode').onchange = e => {
   $('#dual-fields').classList.toggle('hidden', !e.target.checked);
 };
 
-/* ================= 草稿自动保存 ================= */
+/* ================= 草稿 ================= */
 let draftTimer = null;
 function autoSaveDraft() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
     const draft = {
-      content: $('#content').value,
+      content: editorGetText(),
       signature: $('#signature').value,
       blessing: selectedBlessing,
       tags: [...selectedTags],
@@ -229,13 +275,15 @@ function autoSaveDraft() {
       savedAt: Date.now()
     };
     localStorage.setItem('tc_draft', JSON.stringify(draft));
-    $('#draft-status') && ($('#draft-status').textContent = '已保存 ' + new Date().toLocaleTimeString());
   }, 800);
 }
 function loadDraft() {
   const d = JSON.parse(localStorage.getItem('tc_draft') || 'null');
   if (!d) return;
-  if (d.content) { $('#content').value = d.content; $('#char-count').textContent = d.content.length; }
+  if (d.content) {
+    editorSetText(d.content);
+    $('#char-count').textContent = d.content.replace(/\n/g,'').length;
+  }
   if (d.signature) $('#signature').value = d.signature;
   if (d.blessing) {
     selectedBlessing = d.blessing;
@@ -251,7 +299,7 @@ loadDraft();
 
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
-  const content = $('#content').value.trim();
+  const content = editorGetText().trim();
   const password = $('#password').value;
   const hint = $('#hint').value.trim();
   const signature = $('#signature').value.trim();
@@ -259,12 +307,12 @@ $('#lock-btn').onclick = async () => {
   const isDual = $('#dual-mode').checked;
 
   if (!content) return toast('请先写信内容');
-  if (password.length < 4) return toast('密码至少 4 位');
+  if (!password || password.length < 4) return toast('密码不能为空，且至少 4 位');
 
   let pwd2 = '';
   if (isDual) {
     pwd2 = $('#password2').value;
-    if (pwd2.length < 4) return toast('第二人密码至少 4 位');
+    if (!pwd2 || pwd2.length < 4) return toast('第二人密码不能为空，且至少 4 位');
   }
 
   let unlockAt;
@@ -281,9 +329,10 @@ $('#lock-btn').onclick = async () => {
   const btn = $('#lock-btn'); btn.disabled = true; btn.textContent = '加密中…';
   try {
     const key = isDual ? combineDualKey(password, pwd2) : password;
+    const paragraphs = content.split(/\n/).map(s => s.replace(/\u00A0/g,''));
     const payload = {
       blessing: selectedBlessing,
-      content,
+      paragraphs,
       images,
       signature,
       writtenAt: Date.now()
@@ -304,7 +353,6 @@ $('#lock-btn').onclick = async () => {
     if (isDual) item.hint2 = $('#hint2').value.trim();
     store.add(item);
 
-    // 清空草稿与表单
     localStorage.removeItem('tc_draft');
     resetWriteForm();
     toast('🔒 已封存，到时候见');
@@ -317,7 +365,8 @@ $('#lock-btn').onclick = async () => {
 };
 
 function resetWriteForm() {
-  $('#content').value = ''; $('#password').value = ''; $('#hint').value = '';
+  editor.innerHTML = '';
+  $('#password').value = ''; $('#hint').value = '';
   $('#password2').value = ''; $('#hint2').value = '';
   $('#signature').value = '';
   $('#char-count').textContent = '0';
@@ -330,7 +379,7 @@ function resetWriteForm() {
   $('#strength-bar').className = '';
 }
 
-/* ================= 列表渲染 ================= */
+/* ================= 列表 ================= */
 let searchTerm = '';
 let filterTag = '';
 let filterStatus = '';
@@ -356,29 +405,22 @@ function renderFilterTagOptions() {
 
 function renderList() {
   let list = store.get();
-  const total = list.length;
-  $('#badge').textContent = total || '';
+  $('#badge').textContent = list.length || '';
   $('#trash-badge').textContent = trash.get().length || '';
 
-  // 搜索
   if (searchTerm) {
     list = list.filter(it => {
       const keys = [it.hint, it.tag, it.hint2].filter(Boolean).join(' ').toLowerCase();
       return keys.includes(searchTerm);
     });
   }
-  // 标签筛选
-  if (filterTag) {
-    list = list.filter(it => (it.tag || '').split(',').includes(filterTag));
-  }
-  // 状态筛选
+  if (filterTag) list = list.filter(it => (it.tag || '').split(',').includes(filterTag));
   if (filterStatus) {
     list = list.filter(it => {
       const ready = Date.now() >= it.unlockAt;
       return filterStatus === 'ready' ? ready : !ready;
     });
   }
-  // 排序：置顶优先
   list.sort((a, b) => {
     if ((b.pinned?1:0) !== (a.pinned?1:0)) return (b.pinned?1:0) - (a.pinned?1:0);
     if (filterSort === 'unlock-asc') return a.unlockAt - b.unlockAt;
@@ -405,9 +447,7 @@ function renderList() {
           <button data-act="trash" title="删除">🗑️</button>
         </div>
         <div class="letter-head">
-          <div class="letter-title">
-            ${item.isDual ? '👥' : ''} ${ready ? '💌 可以打开了' : '🔒 封存中'}
-          </div>
+          <div class="letter-title">${item.isDual ? '👥' : ''} ${ready ? '💌 可以打开了' : '🔒 封存中'}</div>
           <div>${tags.map(t => `<span class="letter-tag">${escapeHtml(t)}</span>`).join(' ')}</div>
         </div>
         <div class="letter-preview">
@@ -424,7 +464,6 @@ function renderList() {
       </div>`;
   }).join('');
 
-  // 事件绑定
   $$('.letter').forEach(el => {
     const id = el.dataset.id;
     el.addEventListener('click', e => {
@@ -434,6 +473,7 @@ function renderList() {
         if (cb) cb.checked = !cb.checked;
         if (cb && cb.checked) selectedIds.add(id); else selectedIds.delete(id);
         updateBulkBar();
+        renderList();
         return;
       }
       openLetter(id);
@@ -454,41 +494,33 @@ function renderList() {
   });
 }
 
-/* ================= 批量操作 ================= */
-document.addEventListener('keydown', e => {
-  if (e.key === 'Shift' && !selectMode) {
-    // 长按 Shift 进入多选（可选）
-  }
-});
-// 双击标题栏进入多选？（简化：在列表头部加个隐藏入口——通过长按卡片）
+/* ================= 批量 ================= */
 let longPressTimer = null;
-document.addEventListener('touchstart', e => {
-  const card = e.target.closest('.letter');
-  if (!card || selectMode) return;
-  longPressTimer = setTimeout(() => {
-    selectMode = true;
-    selectedIds.add(card.dataset.id);
-    renderList(); updateBulkBar();
-    toast('已进入多选模式');
-  }, 600);
-});
-document.addEventListener('touchend', () => clearTimeout(longPressTimer));
-document.addEventListener('mousedown', e => {
-  if (e.button !== 0) return;
-  const card = e.target.closest('.letter');
-  if (!card || selectMode) return;
+function startLongPress(card) {
   longPressTimer = setTimeout(() => {
     selectMode = true;
     selectedIds.add(card.dataset.id);
     renderList(); updateBulkBar();
     toast('已进入多选模式');
   }, 700);
+}
+document.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const card = e.target.closest('.letter');
+  if (!card || selectMode) return;
+  startLongPress(card);
+});
+document.addEventListener('touchstart', e => {
+  const card = e.target.closest('.letter');
+  if (!card || selectMode) return;
+  startLongPress(card);
 });
 document.addEventListener('mouseup', () => clearTimeout(longPressTimer));
+document.addEventListener('touchend', () => clearTimeout(longPressTimer));
 
 function updateBulkBar() {
   const bar = $('#bulk-bar');
-  if (selectMode && selectedIds.size >= 0) {
+  if (selectMode) {
     bar.classList.remove('hidden');
     $('#bulk-count').textContent = selectedIds.size;
   } else {
@@ -517,7 +549,7 @@ $('#bulk-delete').onclick = () => {
   toast('已移入回收站');
 };
 
-/* ================= 移入回收站 ================= */
+/* ================= 回收站 ================= */
 function moveToTrash(id) {
   const all = store.get();
   const it = all.find(x => x.id === id);
@@ -529,8 +561,6 @@ function moveToTrash(id) {
   renderList(); renderTrash();
   toast('已移入回收站');
 }
-
-/* ================= 回收站渲染 ================= */
 function renderTrash() {
   const list = trash.get().sort((a, b) => b.deletedAt - a.deletedAt);
   const box = $('#trash-list');
@@ -577,56 +607,42 @@ $('#empty-trash').onclick = () => {
 
 /* ================= 打开信件 ================= */
 let timer = null, flipTimer = null;
+
 function openLetter(id) {
   const item = store.get().find(x => x.id === id);
   if (!item) return;
   const ready = Date.now() >= item.unlockAt;
-
-  if (!ready) {
-    // 未到时间 → 翻牌倒计时弹窗
-    showFlipModal(item);
-    return;
-  }
-
-  // 已到时间 → 密码验证弹窗
-  $('#modal').classList.remove('hidden');
-  renderUnlockModal(item);
+  if (!ready) showFlipModal(item);
+  else autoOpenLetter(item);
 }
-function renderUnlockModal(item) {
-  const body = $('#modal-body');
-  if (item.isDual) {
-    body.innerHTML = `
-      <h2>👥 双人信件</h2>
-      <p class="m-sub">需要两个密码都正确才能打开</p>
+
+/* 已到时间：进入密码验证（内容加密，仍需密码解密） */
+function autoOpenLetter(item) {
+  $('#modal').classList.remove('hidden');
+  $('#modal-body').innerHTML = `
+    <h2>💌 ${item.isDual?'双人信件':'一封信'}</h2>
+    <p class="m-sub">写于 ${fmtDate(item.createdAt)} · 已到解锁时间</p>
+    ${item.isDual ? `
       <div class="field"><span>第一人密码</span>
         <input type="password" id="pwd1" placeholder="密码 1"></div>
       <div class="field"><span>第二人密码</span>
         <input type="password" id="pwd2" placeholder="密码 2"></div>
       ${item.hint ? `<p class="m-sub">提示1：${escapeHtml(item.hint)}</p>` : ''}
       ${item.hint2 ? `<p class="m-sub">提示2：${escapeHtml(item.hint2)}</p>` : ''}
-      <div id="err-box"></div>
-      <button class="primary-btn" style="margin-top:14px" id="unlock-btn">解锁阅读</button>
-      <button class="danger-btn" id="delete-btn">删除这封信</button>
-    `;
-    $('#unlock-btn').onclick = () => tryUnlock(item);
-    $('#pwd1').focus();
-    ['pwd1','pwd2'].forEach(id => $('#'+id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') tryUnlock(item);
-    }));
-  } else {
-    body.innerHTML = `
-      <h2>💌 一封信</h2>
-      <p class="m-sub">写于 ${fmtDate(item.createdAt)}</p>
-      <div class="field"><span>输入密码解锁</span>
+    ` : `
+      <div class="field"><span>输入密码查看内容</span>
         <input type="password" id="pwd1" placeholder="密码" autofocus></div>
       ${item.hint ? `<p class="m-sub">提示：${escapeHtml(item.hint)}</p>` : ''}
-      <div id="err-box"></div>
-      <button class="primary-btn" style="margin-top:14px" id="unlock-btn">解锁阅读</button>
-      <button class="danger-btn" id="delete-btn">删除这封信</button>
-    `;
-    $('#unlock-btn').onclick = () => tryUnlock(item);
-    $('#pwd1').addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(item); });
-  }
+    `}
+    <div id="err-box"></div>
+    <button class="primary-btn" style="margin-top:14px" id="unlock-btn">打开信件</button>
+    <button class="danger-btn" id="delete-btn">删除这封信</button>
+  `;
+  $('#unlock-btn').onclick = () => tryUnlock(item);
+  ['pwd1','pwd2'].forEach(id => {
+    const el = $('#'+id);
+    if (el) el.addEventListener('keydown', e => { if (e.key==='Enter') tryUnlock(item); });
+  });
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
 
@@ -641,7 +657,7 @@ async function tryUnlock(item) {
     const payload = JSON.parse(text);
     playEnvelopeAnimation(payload, item);
   } catch (e) {
-    btn.disabled = false; btn.textContent = '解锁阅读';
+    btn.disabled = false; btn.textContent = '打开信件';
     showError('密码错误，请重试');
   }
 }
@@ -653,7 +669,7 @@ function showError(msg) {
   setTimeout(() => { box.innerHTML = ''; }, 2600);
 }
 
-/* ================= 信封展开动画 + 内容展示 ================= */
+/* ================= 信封动画 ================= */
 function playEnvelopeAnimation(payload, item) {
   $('#modal-body').innerHTML = `
     <div class="envelope-stage">
@@ -669,23 +685,28 @@ function playEnvelopeAnimation(payload, item) {
     env.classList.add('open');
     setTimeout(() => showLetterContent(payload, item), 1200);
   };
-  // 自动展开
   setTimeout(() => { if (!env.classList.contains('open')) env.click(); }, 500);
 }
 
+/* ================= 内容展示 ================= */
 function showLetterContent(payload, item) {
+  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const parasHtml = paragraphs
+    .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
   const imagesHtml = (payload.images || []).map(src => `<img src="${src}">`).join('');
+  const writtenAt = payload.writtenAt || item.createdAt;
+
   $('#modal-body').innerHTML = `
     <h2>💌 你的信</h2>
-    <p class="m-sub">写于 ${fmtDate(payload.writtenAt || item.createdAt)}</p>
+    <p class="m-sub">写于 ${fmtDate(writtenAt)}</p>
     <div class="letter-content" id="letter-text">
       ${payload.blessing ? `<div class="content-blessing">${escapeHtml(payload.blessing)}</div>` : ''}
-      <div id="typed-text"></div>
+      <div id="typed-wrap">${parasHtml}</div>
       ${imagesHtml}
       <div class="content-sign">—— ${escapeHtml(payload.signature || '佚名')}</div>
-      <div class="content-date">${fmtDate(payload.writtenAt || item.createdAt)}</div>
+      <div class="content-date">${fmtDate(writtenAt)}</div>
     </div>
-    <div class="letter-tools-row" style="display:flex;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="ghost-btn" id="copy-btn" style="flex:1">复制</button>
       <button class="ghost-btn" id="pdf-btn" style="flex:1">导出 PDF</button>
       <button class="ghost-btn" id="img-btn" style="flex:1">导出图片</button>
@@ -693,94 +714,69 @@ function showLetterContent(payload, item) {
     </div>
     <button class="danger-btn" id="delete-btn">删除这封信</button>
   `;
-  // 打字机
-  const el = $('#typed-text');
-  const text = payload.content || '';
-  let i = 0;
-  const speed = Math.max(6, Math.min(35, 1200 / text.length));
-  (function type() {
-    if (i >= text.length) return;
-    el.textContent += text[i++];
-    setTimeout(type, speed);
-  })();
 
-  // 复制
   $('#copy-btn').onclick = () => {
-    const full = [payload.blessing, payload.content, `—— ${payload.signature||'佚名'}`, fmtDate(payload.writtenAt)].filter(Boolean).join('\n');
+    const full = [payload.blessing, paragraphs.join('\n'),
+      `—— ${payload.signature||'佚名'}`, fmtDate(writtenAt)]
+      .filter(Boolean).join('\n');
     navigator.clipboard.writeText(full).then(() => toast('已复制'));
   };
-  // PDF
   $('#pdf-btn').onclick = () => exportPDF(payload, item);
-  // 图片
   $('#img-btn').onclick = () => exportImage(payload, item);
-  // 分享
   $('#share-btn').onclick = () => shareLetter(item.id);
-  // 删除
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
 
-/* ================= PDF 导出 ================= */
-async function exportPDF(payload, item) {
-  toast('生成 PDF 中…');
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const margin = 60;
-  let y = margin;
+/* ================= PDF（浏览器打印） ================= */
+function exportPDF(payload, item) {
+  const writtenAt = payload.writtenAt || item.createdAt;
+  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const parasHtml = paragraphs
+    .map(p => `<p style="text-indent:2em;margin:0 0 8px;line-height:1.9">${escapeHtml(p) || '&nbsp;'}</p>`)
+    .join('');
+  const imagesHtml = (payload.images || [])
+    .map(s => `<img src="${s}" style="max-width:100%;margin:10px 0;border-radius:6px">`)
+    .join('');
 
-  doc.setFont('times', 'normal');
-  doc.setFontSize(16);
-  if (payload.blessing) {
-    doc.text(payload.blessing, 105, y); y += 26;
-  }
-  doc.setFontSize(12);
-  const contentLines = doc.splitTextToSize(payload.content || '', 595 - margin*2);
-  contentLines.forEach(line => {
-    if (y > 780) { doc.addPage(); y = margin; }
-    doc.text(line, margin, y); y += 20;
-  });
-  if (payload.images && payload.images.length) {
-    for (const src of payload.images) {
-      try {
-        const img = await loadImage(src);
-        const maxW = 595 - margin*2;
-        const ratio = img.height / img.width;
-        let w = maxW, h = w * ratio;
-        if (h > 400) { h = 400; w = h / ratio; }
-        if (y + h > 800) { doc.addPage(); y = margin; }
-        doc.addImage(src, 'JPEG', margin, y, w, h);
-        y += h + 16;
-      } catch(e){}
-    }
-  }
-  if (y > 750) { doc.addPage(); y = margin; }
-  y += 20;
-  doc.setFontSize(11);
-  doc.text(`—— ${payload.signature || '佚名'}`, 595 - margin, y, { align: 'right' }); y += 18;
-  doc.setTextColor(120);
-  doc.text(fmtDate(payload.writtenAt || item.createdAt), 595 - margin, y, { align: 'right' });
-  doc.text(`导出时间：${fmtDate(Date.now())}`, 595 - margin, y + 16, { align: 'right' });
-
-  doc.save(`时光信_${fmtDateShort(Date.now())}.pdf`);
-  toast('PDF 已导出');
-}
-function loadImage(src) {
-  return new Promise((res, rej) => {
-    const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src;
-  });
+  const html = `
+    <div style="padding:20mm 18mm;font-family:'Noto Serif SC','Songti SC',serif;color:#222">
+      ${payload.blessing ? `<div style="color:#8b6f47;letter-spacing:3px;font-size:16px;margin-bottom:16px;font-weight:600">${escapeHtml(payload.blessing)}</div>` : ''}
+      <div style="font-size:14px">${parasHtml}</div>
+      ${imagesHtml}
+      <div style="text-align:right;margin-top:26px;color:#666;font-style:italic">—— ${escapeHtml(payload.signature||'佚名')}</div>
+      <div style="text-align:right;color:#888;font-size:12px">写信时间：${fmtDate(writtenAt)}</div>
+      <div style="text-align:right;color:#aaa;font-size:11px;margin-top:4px">导出时间：${fmtDate(Date.now())}</div>
+    </div>
+  `;
+  const area = $('#print-area');
+  area.innerHTML = html;
+  const oldTitle = document.title;
+  document.title = `时光信_${fmtDateShort(Date.now())}`;
+  window.print();
+  setTimeout(() => {
+    document.title = oldTitle;
+    area.innerHTML = '';
+  }, 500);
+  toast('在打印窗口选择"另存为 PDF"');
 }
 
 /* ================= 图片导出 ================= */
 async function exportImage(payload, item) {
   toast('生成图片中…');
+  const writtenAt = payload.writtenAt || item.createdAt;
+  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const parasHtml = paragraphs
+    .map(p => `<p style="text-indent:2em;margin:0 0 8px">${escapeHtml(p) || '&nbsp;'}</p>`)
+    .join('');
   const wrap = document.createElement('div');
   wrap.style.cssText = `position:fixed;left:-9999px;top:0;width:640px;padding:40px;
     background:#fffdf8;font-family:"Noto Serif SC",serif;color:#3a3128;line-height:1.9`;
   wrap.innerHTML = `
     ${payload.blessing ? `<div style="color:#8b6f47;letter-spacing:3px;font-size:18px;margin-bottom:16px;font-weight:600">${escapeHtml(payload.blessing)}</div>` : ''}
-    <div style="white-space:pre-wrap;font-size:15px">${escapeHtml(payload.content)}</div>
+    <div style="font-size:15px">${parasHtml}</div>
     ${(payload.images||[]).map(s => `<img src="${s}" style="max-width:100%;border-radius:8px;margin:10px 0">`).join('')}
     <div style="text-align:right;margin-top:26px;color:#8a7d6b;font-style:italic">—— ${escapeHtml(payload.signature||'佚名')}</div>
-    <div style="text-align:right;color:#8a7d6b;font-size:13px">${fmtDate(payload.writtenAt||item.createdAt)}</div>
+    <div style="text-align:right;color:#8a7d6b;font-size:13px">写信时间：${fmtDate(writtenAt)}</div>
     <div style="text-align:right;color:#aaa;font-size:12px;margin-top:6px">导出时间：${fmtDate(Date.now())}</div>
   `;
   document.body.appendChild(wrap);
@@ -799,19 +795,17 @@ async function exportImage(payload, item) {
 async function shareLetter(id) {
   const item = store.get().find(x => x.id === id);
   if (!item) return;
-  if (item.isDual) {
-    return toast('双人信件不支持分享链接');
-  }
+  if (item.isDual) return toast('双人信件不支持分享链接');
   const data = {
     v: 1,
     unlockAt: item.unlockAt,
     hint: item.hint,
     enc: item.enc,
-    isDual: false,
     createdAt: item.createdAt
   };
-  const packed = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-  const url = `${location.origin}${location.pathname.replace('index.html','')}share.html#${packed}`;
+  const packed = b64uEncode(JSON.stringify(data));
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const url = `${base}share.html#${packed}`;
   try {
     await navigator.clipboard.writeText(url);
     toast('分享链接已复制到剪贴板');
@@ -820,7 +814,8 @@ async function shareLetter(id) {
   }
 }
 
-/* ================= 翻牌倒计时 ================= */
+/* ================= 翻牌倒计时（只翻变化数字） ================= */
+const flipCache = {};
 function showFlipModal(item) {
   $('#flip-modal').classList.remove('hidden');
   $('#flip-sub').textContent = `这封信将在 ${fmtDate(item.unlockAt)} 解锁`;
@@ -829,43 +824,108 @@ function showFlipModal(item) {
     $('#flip-modal').classList.add('hidden');
     clearInterval(flipTimer);
   };
-  const render = () => {
-    const ms = item.unlockAt - Date.now();
-    if (ms <= 0) {
-      clearInterval(flipTimer);
-      $('#flip-clock').innerHTML = '<div style="font-size:22px;color:#27ae60">✨ 可以打开了，请刷新列表</div>';
-      return;
+
+  // 提前解锁区
+  let earlyZone = $('#early-zone');
+  if (!earlyZone) {
+    earlyZone = document.createElement('div');
+    earlyZone.id = 'early-zone';
+    $('#flip-clock').parentNode.appendChild(earlyZone);
+  }
+  earlyZone.innerHTML = `
+    <div style="margin-top:18px;text-align:left;border-top:1px dashed var(--line);padding-top:16px">
+      <p class="m-sub" style="margin-bottom:8px">🔑 想提前打开？输入密码即可</p>
+      <div class="field">
+        <input type="password" id="early-pwd1" placeholder="${item.isDual?'第一人密码':'密码'}">
+      </div>
+      ${item.isDual ? `<div class="field"><input type="password" id="early-pwd2" placeholder="第二人密码"></div>` : ''}
+      <div id="early-err"></div>
+      <button class="ghost-btn" id="early-open" style="width:100%;margin-top:10px">提前解锁</button>
+    </div>
+  `;
+  $('#early-open').onclick = async () => {
+    const p1 = $('#early-pwd1').value;
+    const p2 = item.isDual ? $('#early-pwd2').value : '';
+    if (!p1 || (item.isDual && !p2)) {
+      $('#early-err').innerHTML = '<div class="error-msg">请输入完整密码</div>';
+      setTimeout(()=>$('#early-err').innerHTML='',2600); return;
     }
-    const s = Math.floor(ms/1000);
-    const d = Math.floor(s/86400);
-    const h = Math.floor(s%86400/3600);
-    const m = Math.floor(s%3600/60);
-    const sec = s%60;
-    const units = [
-      {v:d, l:'天'}, {v:h, l:'时'}, {v:m, l:'分'}, {v:sec, l:'秒'}
-    ];
-    const html = units.map(u => {
-      const cur = String(u.v).padStart(2,'0');
-      const old = $(`[data-u="${u.l}"]`);
-      const changed = old && old.dataset.v !== cur;
-      return `<div class="flip-unit"><span class="num" data-u="${u.l}" data-v="${cur}" style="${changed?'animation:none':''}">${cur}</span><span class="lab">${u.l}</span></div>`;
-    }).join('');
-    $('#flip-clock').innerHTML = html;
-    // 重新触发动画
-    $$('#flip-clock .num').forEach(el => {
-      el.style.animation = 'none';
-      void el.offsetWidth;
-      el.style.animation = 'flipIn .35s';
-    });
+    try {
+      const key = item.isDual ? combineDualKey(p1, p2) : p1;
+      const text = await decrypt(item.enc, key);
+      const payload = JSON.parse(text);
+      $('#flip-modal').classList.add('hidden');
+      clearInterval(flipTimer);
+      $('#modal').classList.remove('hidden');
+      playEnvelopeAnimation(payload, item);
+    } catch(e) {
+      $('#early-err').innerHTML = '<div class="error-msg">密码错误</div>';
+      setTimeout(()=>$('#early-err').innerHTML='',2600);
+    }
   };
-  render();
+
+  renderFlipClock(item);
   clearInterval(flipTimer);
-  flipTimer = setInterval(render, 1000);
+  flipTimer = setInterval(() => renderFlipClock(item), 1000);
 }
 
-/* ================= 导出 / 导入 ================= */
+function renderFlipClock(item) {
+  const ms = item.unlockAt - Date.now();
+  const clock = $('#flip-clock');
+  if (ms <= 0) {
+    clearInterval(flipTimer);
+    clock.innerHTML = '<div style="font-size:20px;color:#27ae60;padding:16px">✨ 可以打开了，请关闭后查看</div>';
+    return;
+  }
+  const s = Math.floor(ms/1000);
+  const units = [
+    { k:'d', v:Math.floor(s/86400),      l:'天' },
+    { k:'h', v:Math.floor(s%86400/3600), l:'时' },
+    { k:'m', v:Math.floor(s%3600/60),    l:'分' },
+    { k:'s', v:s%60,                     l:'秒' }
+  ];
+  if (!clock.dataset.built) {
+    clock.innerHTML = units.map(u => `
+      <div class="flip-unit">
+        <span class="flip-digits" data-k="${u.k}"></span>
+        <span class="lab">${u.l}</span>
+      </div>
+    `).join('');
+    clock.dataset.built = '1';
+    Object.keys(flipCache).forEach(k => delete flipCache[k]);
+  }
+  units.forEach(u => {
+    const str = String(u.v).padStart(2, '0');
+    const prev = flipCache[u.k] || ['', ''];
+    const digitsBox = clock.querySelector(`[data-k="${u.k}"]`);
+    str.split('').forEach((ch, i) => {
+      let el = digitsBox.children[i];
+      if (!el) {
+        el = document.createElement('span');
+        el.className = 'flip-digit';
+        el.innerHTML = '<span class="d"></span>';
+        digitsBox.appendChild(el);
+      }
+      const d = el.querySelector('.d');
+      if (prev[i] !== ch) {
+        d.textContent = ch;
+        el.classList.remove('flip');
+        void el.offsetWidth;
+        el.classList.add('flip');
+      }
+    });
+    flipCache[u.k] = str.split('');
+  });
+}
+
+/* ================= 导出/导入 ================= */
 $('#export-btn').onclick = () => {
-  const data = { letters: store.get(), trash: trash.get(), tags: tagStore.get(), exportedAt: Date.now() };
+  const data = {
+    letters: store.get(),
+    trash: trash.get(),
+    tags: tagStore.get(),
+    exportedAt: Date.now()
+  };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
