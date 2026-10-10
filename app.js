@@ -190,32 +190,25 @@ function renderImages() {
 /* ================= 正文编辑器 ================= */
 const editor = $('#letter-editor');
 
-/* 判断节点是否为图片（防止图片混入正文） */
-function isImageNode(node) {
-  if (!node) return false;
-  if (node.nodeType === 1 && node.tagName === 'IMG') return true;
-  if (node.nodeType === 1 && node.querySelector && node.querySelector('img')) return true;
-  return false;
-}
-
-/* 获取纯文本：只收集 p / div 的文本，忽略图片和空节点 */
 function editorGetText() {
-  const blocks = editor.querySelectorAll('p, div');
+  // 只取编辑器的直接子元素，避免 p / div 被重复选中
+  const blocks = [...editor.children].filter(el =>
+    el.nodeType === 1 && /^(P|DIV)$/.test(el.tagName)
+  );
   if (blocks.length) {
-    return [...blocks].map(b => {
-      // 如果块里包含图片，跳过图片只取文字
+    return blocks.map(b => {
       const clone = b.cloneNode(true);
       clone.querySelectorAll('img').forEach(img => img.remove());
+      clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
       return clone.textContent.replace(/\u00A0/g, '');
     }).join('\n');
   }
-  // 没有块级元素时，取纯文本
   const clone = editor.cloneNode(true);
   clone.querySelectorAll('img').forEach(img => img.remove());
+  clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
   return clone.textContent.replace(/\u00A0/g, '');
 }
 
-/* 设置文本：清空后逐行建 <p>，绝不插入图片 */
 function editorSetText(text) {
   editor.innerHTML = '';
   const lines = String(text || '').split(/\n/);
@@ -226,7 +219,7 @@ function editorSetText(text) {
   });
 }
 
-/* 回车：新建段落 */
+/* 回车 */
 editor.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -242,14 +235,14 @@ editor.addEventListener('keydown', e => {
   }
 });
 
-/* 输入：更新字数 + 自动保存 */
+/* 输入 */
 editor.addEventListener('input', () => {
   const len = editorGetText().replace(/\u00A0/g,'').length;
   $('#char-count').textContent = len;
   autoSaveDraft();
 });
 
-/* 关键修复：粘贴时强制纯文本，禁止图片/HTML 混入正文 */
+/* 粘贴：强制纯文本 */
 editor.addEventListener('paste', e => {
   e.preventDefault();
   const text = (e.clipboardData || window.clipboardData).getData('text/plain');
@@ -274,7 +267,7 @@ editor.addEventListener('paste', e => {
   editor.dispatchEvent(new Event('input'));
 });
 
-/* 关键修复：拖入图片时拦截，改为走 images 数组，不插入编辑器 */
+/* 拖入图片：走 images 数组，不进编辑器 */
 editor.addEventListener('drop', e => {
   const files = e.dataTransfer && e.dataTransfer.files;
   if (!files || !files.length) return;
