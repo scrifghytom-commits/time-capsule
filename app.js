@@ -176,21 +176,49 @@ function renderImages() {
     images.splice(+b.dataset.i, 1); renderImages();
   });
 }
-/* ================= 正文编辑器【重构段落获取与回车逻辑】 ================= */
+/* ================= 正文编辑器【支持Enter段落 / Shift+Enter行内软换行，保留<br>】 ================= */
 const editor = $('#letter-editor');
 
-/** 获取编辑器段落数组，每一项为一段纯文本，去除&nbsp; */
-function editorGetParagraphs() {
+/**
+ * 获取段落数组：每一项是段落内部HTML片段，保留<br>软换行
+ * 安全处理：剥离全部html标签，只保留 <br>
+ */
+function sanitizeParaHtml(html){
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  // 删除除br以外全部标签，只保留文本+br
+  const walk = (node)=>{
+    const frag = document.createDocumentFragment();
+    node.childNodes.forEach(n=>{
+      if(n.nodeType === Node.TEXT_NODE){
+        frag.appendChild(document.createTextNode(n.textContent));
+      }else if(n.tagName === 'BR'){
+        frag.appendChild(document.createElement('br'));
+      }else if(n.childNodes.length){
+        frag.appendChild(walk(n));
+      }
+    });
+    return frag;
+  };
+  const resultDiv = walk(temp);
+  const wrap = document.createElement('div');
+  wrap.appendChild(resultDiv);
+  return wrap.innerHTML;
+}
+
+/** 获取段落数组（保留br软换行html） */
+function editorGetParagraphHtmlList() {
   const paras = [...editor.querySelectorAll('p')];
-  return paras.map(p => p.innerText.replace(/\u00A0/g, '')).filter(s => true);
+  return paras.map(p => sanitizeParaHtml(p.innerHTML));
 }
 
-/** 获取总字符数用于计数显示 */
+/** 获取纯文本，用于字符计数、草稿备份 */
 function editorGetText() {
-  return editorGetParagraphs().join('\n');
+  const paras = [...editor.querySelectorAll('p')];
+  return paras.map(p=>p.innerText).join('\n');
 }
 
-/** 设置编辑器内容，根据段落数组渲染p标签 */
+/** 设置编辑器内容，用于草稿恢复 */
 function editorSetText(text) {
   editor.innerHTML = '';
   const lines = String(text || '').split(/\n/);
@@ -201,25 +229,38 @@ function editorSetText(text) {
   });
 }
 
-// 修复回车：只创建平级p，禁止嵌套p
+// 回车事件：区分 Enter / Shift+Enter
 editor.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-
-    // 新建段落，直接插入，不要嵌套
-    const newP = document.createElement('p');
-    newP.textContent = '\u00A0';
-    range.deleteContents();
-    range.insertNode(newP);
-
-    // 将光标定位到新段落开头
-    range.setStart(newP, 0);
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
+  if (e.key === 'Enter') {
+    if(e.shiftKey){
+      // Shift+Enter：同一段落内软换行，插入<br>
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      const br = document.createElement('br');
+      range.deleteContents();
+      range.insertNode(br);
+      // 光标移到br后面
+      range.setStartAfter(br);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }else{
+      // Enter：新建<p>段落
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      const newP = document.createElement('p');
+      newP.textContent = '\u00A0';
+      range.deleteContents();
+      range.insertNode(newP);
+      range.setStart(newP,0);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   }
 });
 
@@ -305,8 +346,8 @@ function loadDraft() {
 loadDraft();
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
-  const paragraphs = editorGetParagraphs();
-  const contentText = paragraphs.join('\n').trim();
+  const paragraphHtmlList = editorGetParagraphHtmlList();
+  const contentText = editorGetText().trim();
   const password = $('#password').value;
   const hint = $('#hint').value.trim();
   const signature = $('#signature').value.trim();
@@ -334,17 +375,14 @@ $('#lock-btn').onclick = async () => {
     const key = isDual ? combineDualKey(password, pwd2) : password;
     const payload = {
       blessing: selectedBlessing,
-      paragraphs,
+      paragraphsHtml: paragraphHtmlList, // 保存带<br>的段落html片段
       images,
       signature,
       writtenAt: Date.now()
     };
-    // 先生成 id 和 createdAt，用于派生时间密钥
     const id = crypto.randomUUID();
     const createdAt = Date.now();
-    // 用户密码加密（用于提前打开）
     const enc = await encrypt(JSON.stringify(payload), key);
-    // 时间密钥加密（用于到期自动解锁）
     const autoEnc = await encrypt(JSON.stringify(payload), 'TIMEKEY::' + id + '::' + createdAt);
     const item = {
       id,
@@ -608,7 +646,6 @@ function openLetter(id) {
   if (!ready) showFlipModal(item);
   else autoOpenLetter(item);
 }
-/* 已到时间：自动解密展示，无需密码 */
 async function autoOpenLetter(item) {
   $('#modal').classList.remove('hidden');
   $('#modal-body').innerHTML = `
@@ -622,11 +659,9 @@ async function autoOpenLetter(item) {
     const payload = JSON.parse(text);
     playEnvelopeAnimation(payload, item);
   } catch (e) {
-    // 兼容旧数据：没有 autoEnc 时回退到密码验证
     showPasswordFallback(item);
   }
 }
-/* 兼容旧数据：显示密码输入 */
 function showPasswordFallback(item) {
   $('#modal-body').innerHTML = `
     <h2>💌 ${item.isDual?'双人信件':'一封信'}</h2>
@@ -693,13 +728,14 @@ function playEnvelopeAnimation(payload, item) {
   };
   setTimeout(() => { if (!env.classList.contains('open')) env.click(); }, 500);
 }
-/* ================= 内容展示【修复段落渲染，逐条渲染p标签】 ================= */
+/* ================= 内容展示：支持<br>软换行，每个p首行缩进 ================= */
 function showLetterContent(payload, item) {
-  const paragraphs = payload.paragraphs || [];
-  const parasHtml = paragraphs
-    .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
+  // 兼容老信件没有paragraphsHtml字段，降级旧paragraphs纯文本
+  const paraList = payload.paragraphsHtml || (payload.paragraphs||[]).map(t=>escapeHtml(t));
+  const parasHtml = paraList.map(html=>`<p>${html||'&nbsp;'}</p>`).join('');
   const imagesHtml = (payload.images || []).map(src => `<img src="${src}">`).join('');
   const writtenAt = payload.writtenAt || item.createdAt;
+
   $('#modal-body').innerHTML = `
     <h2>💌 你的信</h2>
     <p class="m-sub">写于 ${fmtDate(writtenAt)}</p>
@@ -718,8 +754,14 @@ function showLetterContent(payload, item) {
     </div>
     <button class="danger-btn" id="delete-btn">删除这封信</button>
   `;
+
   $('#copy-btn').onclick = () => {
-    const full = [payload.blessing, paragraphs.join('\n'),
+    // 复制文本，把br换成\n
+    const plainText = paraList.map(h=>{
+      const d = document.createElement('div'); d.innerHTML = h;
+      return d.innerText;
+    }).join('\n');
+    const full = [payload.blessing, plainText,
       `—— ${payload.signature||'佚名'}`, fmtDate(writtenAt)]
       .filter(Boolean).join('\n');
     navigator.clipboard.writeText(full).then(() => toast('已复制'));
@@ -729,13 +771,13 @@ function showLetterContent(payload, item) {
   $('#share-btn').onclick = () => shareLetter(item.id);
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
-/* ================= PDF（浏览器打印）【修复段落渲染】 ================= */
+/* ================= PDF导出 ================= */
 function exportPDF(payload, item) {
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = payload.paragraphs || [];
-  const parasHtml = paragraphs
-    .map(p => `<p style="text-indent:2em;margin:0 0 8px;line-height:1.9">${escapeHtml(p) || '&nbsp;'}</p>`)
-    .join('');
+  const paraList = payload.paragraphsHtml || (payload.paragraphs||[]).map(t=>escapeHtml(t));
+  const parasHtml = paraList.map(html=>
+    `<p style="text-indent:2em;margin:0 0 8px;line-height:1.9">${html||'&nbsp;'}</p>`
+  ).join('');
   const imagesHtml = (payload.images || [])
     .map(s => `<img src="${s}" style="max-width:100%;margin:10px 0;border-radius:6px">`)
     .join('');
@@ -760,14 +802,14 @@ function exportPDF(payload, item) {
   }, 500);
   toast('在打印窗口选择"另存为 PDF"');
 }
-/* ================= 图片导出【修复段落渲染】 ================= */
+/* ================= 图片导出 ================= */
 async function exportImage(payload, item) {
   toast('生成图片中…');
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = payload.paragraphs || [];
-  const parasHtml = paragraphs
-    .map(p => `<p style="text-indent:2em;margin:0 0 8px">${escapeHtml(p) || '&nbsp;'}</p>`)
-    .join('');
+  const paraList = payload.paragraphsHtml || (payload.paragraphs||[]).map(t=>escapeHtml(t));
+  const parasHtml = paraList.map(html=>
+    `<p style="text-indent:2em;margin:0 0 8px">${html||'&nbsp;'}</p>`
+  ).join('');
   const wrap = document.createElement('div');
   wrap.style.cssText = `position:fixed;left:-9999px;top:0;width:640px;padding:40px;
     background:#fffdf8;font-family:"Noto Serif SC",serif;color:#3a3128;line-height:1.9`;
@@ -824,7 +866,6 @@ function showFlipModal(item) {
     $('#flip-modal').classList.add('hidden');
     clearInterval(flipTimer);
   };
-  // 提前解锁区
   let earlyZone = $('#early-zone');
   if (!earlyZone) {
     earlyZone = document.createElement('div');
@@ -872,7 +913,6 @@ function renderFlipClock(item) {
   if (ms <= 0) {
     clearInterval(flipTimer);
     clock.innerHTML = '<div style="font-size:20px;color:#27ae60;padding:16px">✨ 可以打开了，请关闭后查看</div>';
-    // 自动关闭并打开信件
     setTimeout(() => {
       $('#flip-modal').classList.add('hidden');
       autoOpenLetter(item);
