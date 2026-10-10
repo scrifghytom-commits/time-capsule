@@ -190,15 +190,32 @@ function renderImages() {
 /* ================= 正文编辑器 ================= */
 const editor = $('#letter-editor');
 
-function editorGetText() {
-  // 只读取编辑器内部的 <p> 标签，避免图片区或其他外部元素干扰
-  const paras = editor.querySelectorAll('p');
-  if (paras.length) {
-    return [...paras].map(p => p.textContent.replace(/\u00A0/g, '')).join('\n');
-  }
-  // 如果没有 <p>，说明用户还没输入或浏览器未自动包裹，直接返回空
-  return '';
+/* 判断节点是否为图片（防止图片混入正文） */
+function isImageNode(node) {
+  if (!node) return false;
+  if (node.nodeType === 1 && node.tagName === 'IMG') return true;
+  if (node.nodeType === 1 && node.querySelector && node.querySelector('img')) return true;
+  return false;
 }
+
+/* 获取纯文本：只收集 p / div 的文本，忽略图片和空节点 */
+function editorGetText() {
+  const blocks = editor.querySelectorAll('p, div');
+  if (blocks.length) {
+    return [...blocks].map(b => {
+      // 如果块里包含图片，跳过图片只取文字
+      const clone = b.cloneNode(true);
+      clone.querySelectorAll('img').forEach(img => img.remove());
+      return clone.textContent.replace(/\u00A0/g, '');
+    }).join('\n');
+  }
+  // 没有块级元素时，取纯文本
+  const clone = editor.cloneNode(true);
+  clone.querySelectorAll('img').forEach(img => img.remove());
+  return clone.textContent.replace(/\u00A0/g, '');
+}
+
+/* 设置文本：清空后逐行建 <p>，绝不插入图片 */
 function editorSetText(text) {
   editor.innerHTML = '';
   const lines = String(text || '').split(/\n/);
@@ -208,6 +225,8 @@ function editorSetText(text) {
     editor.appendChild(p);
   });
 }
+
+/* 回车：新建段落 */
 editor.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -222,10 +241,52 @@ editor.addEventListener('keydown', e => {
     sel.removeAllRanges(); sel.addRange(range);
   }
 });
+
+/* 输入：更新字数 + 自动保存 */
 editor.addEventListener('input', () => {
   const len = editorGetText().replace(/\u00A0/g,'').length;
   $('#char-count').textContent = len;
   autoSaveDraft();
+});
+
+/* 关键修复：粘贴时强制纯文本，禁止图片/HTML 混入正文 */
+editor.addEventListener('paste', e => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  if (!text) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  sel.deleteFromDocument();
+  const lines = text.split(/\r?\n/);
+  const range = sel.getRangeAt(0);
+  lines.forEach((line, i) => {
+    if (i > 0) {
+      const p = document.createElement('p');
+      p.textContent = line || '\u00A0';
+      range.insertNode(p);
+      range.setStartAfter(p);
+    } else {
+      range.insertNode(document.createTextNode(line));
+      range.setStartAfter(range.endContainer);
+    }
+  });
+  sel.removeAllRanges();
+  editor.dispatchEvent(new Event('input'));
+});
+
+/* 关键修复：拖入图片时拦截，改为走 images 数组，不插入编辑器 */
+editor.addEventListener('drop', e => {
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  const imgs = [...files].filter(f => f.type.startsWith('image/'));
+  if (!imgs.length) return;
+  e.preventDefault();
+  imgs.forEach(f => {
+    if (f.size > 1.5 * 1024 * 1024) return toast(`图片 ${f.name} 超过 1.5MB`);
+    const r = new FileReader();
+    r.onload = ev => { images.push(ev.target.result); renderImages(); };
+    r.readAsDataURL(f);
+  });
 });
 
 /* ================= 落款日期 ================= */
