@@ -191,9 +191,13 @@ function renderImages() {
 const editor = $('#letter-editor');
 
 function editorGetText() {
+  // 只读取编辑器内部的 <p> 标签，避免图片区或其他外部元素干扰
   const paras = editor.querySelectorAll('p');
-  if (paras.length) return [...paras].map(p => p.textContent).join('\n');
-  return editor.innerText;
+  if (paras.length) {
+    return [...paras].map(p => p.textContent.replace(/\u00A0/g, '')).join('\n');
+  }
+  // 如果没有 <p>，说明用户还没输入或浏览器未自动包裹，直接返回空
+  return '';
 }
 function editorSetText(text) {
   editor.innerHTML = '';
