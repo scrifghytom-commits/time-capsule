@@ -191,24 +191,10 @@ function renderImages() {
 const editor = $('#letter-editor');
 
 function editorGetText() {
-  // 只取编辑器的直接子元素，避免 p / div 被重复选中
-  const blocks = [...editor.children].filter(el =>
-    el.nodeType === 1 && /^(P|DIV)$/.test(el.tagName)
-  );
-  if (blocks.length) {
-    return blocks.map(b => {
-      const clone = b.cloneNode(true);
-      clone.querySelectorAll('img').forEach(img => img.remove());
-      clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-      return clone.textContent.replace(/\u00A0/g, '');
-    }).join('\n');
-  }
-  const clone = editor.cloneNode(true);
-  clone.querySelectorAll('img').forEach(img => img.remove());
-  clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-  return clone.textContent.replace(/\u00A0/g, '');
+  const paras = editor.querySelectorAll('p');
+  if (paras.length) return [...paras].map(p => p.textContent).join('\n');
+  return editor.innerText;
 }
-
 function editorSetText(text) {
   editor.innerHTML = '';
   const lines = String(text || '').split(/\n/);
@@ -218,8 +204,6 @@ function editorSetText(text) {
     editor.appendChild(p);
   });
 }
-
-/* 回车 */
 editor.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -234,52 +218,10 @@ editor.addEventListener('keydown', e => {
     sel.removeAllRanges(); sel.addRange(range);
   }
 });
-
-/* 输入 */
 editor.addEventListener('input', () => {
   const len = editorGetText().replace(/\u00A0/g,'').length;
   $('#char-count').textContent = len;
   autoSaveDraft();
-});
-
-/* 粘贴：强制纯文本 */
-editor.addEventListener('paste', e => {
-  e.preventDefault();
-  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
-  if (!text) return;
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  sel.deleteFromDocument();
-  const lines = text.split(/\r?\n/);
-  const range = sel.getRangeAt(0);
-  lines.forEach((line, i) => {
-    if (i > 0) {
-      const p = document.createElement('p');
-      p.textContent = line || '\u00A0';
-      range.insertNode(p);
-      range.setStartAfter(p);
-    } else {
-      range.insertNode(document.createTextNode(line));
-      range.setStartAfter(range.endContainer);
-    }
-  });
-  sel.removeAllRanges();
-  editor.dispatchEvent(new Event('input'));
-});
-
-/* 拖入图片：走 images 数组，不进编辑器 */
-editor.addEventListener('drop', e => {
-  const files = e.dataTransfer && e.dataTransfer.files;
-  if (!files || !files.length) return;
-  const imgs = [...files].filter(f => f.type.startsWith('image/'));
-  if (!imgs.length) return;
-  e.preventDefault();
-  imgs.forEach(f => {
-    if (f.size > 1.5 * 1024 * 1024) return toast(`图片 ${f.name} 超过 1.5MB`);
-    const r = new FileReader();
-    r.onload = ev => { images.push(ev.target.result); renderImages(); };
-    r.readAsDataURL(f);
-  });
 });
 
 /* ================= 落款日期 ================= */
@@ -362,10 +304,14 @@ loadDraft();
 
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
-  const raw = editorGetText();                 // 不再 trim
-  const content = raw;
-  if (!content.replace(/\s/g, '')) return toast('请先写信内容');
-  
+  const content = editorGetText().trim();
+  const password = $('#password').value;
+  const hint = $('#hint').value.trim();
+  const signature = $('#signature').value.trim();
+  const useExact = !$('#exact-date').classList.contains('hidden');
+  const isDual = $('#dual-mode').checked;
+
+  if (!content) return toast('请先写信内容');
   if (!password || password.length < 4) return toast('密码不能为空，且至少 4 位');
 
   let pwd2 = '';
@@ -387,15 +333,16 @@ $('#lock-btn').onclick = async () => {
 
   const btn = $('#lock-btn'); btn.disabled = true; btn.textContent = '加密中…';
   try {
-   const key = isDual ? combineDualKey(password, pwd2) : password;
-const paragraphs = raw.split('\n').map(s => s.replace(/\u00A0/g, ''));
-const payload = {
-  blessing: selectedBlessing,
-  paragraphs,
-  images,
-  signature,
-  writtenAt: Date.now()
-};
+    const key = isDual ? combineDualKey(password, pwd2) : password;
+    const paragraphs = content.split(/\n/).map(s => s.replace(/\u00A0/g,''));
+    const payload = {
+      blessing: selectedBlessing,
+      paragraphs,
+      images,
+      signature,
+      writtenAt: Date.now()
+    };
+
     // 先生成 id 和 createdAt，用于派生时间密钥
     const id = crypto.randomUUID();
     const createdAt = Date.now();
