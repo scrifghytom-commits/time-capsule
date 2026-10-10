@@ -1,7 +1,6 @@
 /* ================= 工具 ================= */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-
 const store = {
   get: () => JSON.parse(localStorage.getItem('tc_letters') || '[]'),
   set: l => localStorage.setItem('tc_letters', JSON.stringify(l)),
@@ -16,7 +15,6 @@ const trash = {
   set: l => localStorage.setItem('tc_trash', JSON.stringify(l)),
   add: it => { const l = trash.get(); l.push(it); trash.set(l); }
 };
-
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2400);
@@ -40,7 +38,6 @@ function timeLeft(ms) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
 /* Base64URL 编解码 */
 function b64uEncode(str) {
   const bytes = new TextEncoder().encode(str);
@@ -56,7 +53,6 @@ function b64uDecode(s) {
   for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
   return new TextDecoder().decode(bytes);
 }
-
 /* ================= 加密 ================= */
 async function deriveKey(password, salt) {
   const enc = new TextEncoder();
@@ -82,12 +78,10 @@ async function decrypt(payload, password) {
   return new TextDecoder().decode(buf);
 }
 function combineDualKey(p1, p2) { return p1 + '||DUAL||' + p2; }
-
 /* 时间密钥：由信件 id + createdAt 派生，用于到期自动解密 */
 function timeKeyFor(item) {
   return 'TIMEKEY::' + item.id + '::' + item.createdAt;
 }
-
 /* ================= 主题 ================= */
 (function(){
   const saved = localStorage.getItem('theme') || 'light';
@@ -101,7 +95,6 @@ $('#theme-toggle').onclick = () => {
   localStorage.setItem('theme', next);
   $('#theme-toggle').textContent = next === 'dark' ? '☀️' : '🌙';
 };
-
 /* ================= 视图 ================= */
 $$('.tab').forEach(t => t.onclick = () => switchView(t.dataset.view));
 function switchView(name) {
@@ -110,7 +103,6 @@ function switchView(name) {
   if (name === 'list') renderList();
   if (name === 'trash') renderTrash();
 }
-
 /* ================= 祝福语 ================= */
 let selectedBlessing = '见字如面';
 $$('#blessing-chips .chip').forEach(c => c.onclick = () => {
@@ -132,7 +124,6 @@ $('#blessing-custom').addEventListener('input', e => {
     $('#blessing-preview').style.display = 'none';
   }
 });
-
 /* ================= 标签 ================= */
 let selectedTags = new Set();
 const tagStore = {
@@ -164,7 +155,6 @@ $('#add-tag-btn').onclick = () => {
   toast('已创建标签');
 };
 renderTagChips();
-
 /* ================= 图片 ================= */
 let images = [];
 $('#add-image').onclick = () => $('#image-input').click();
@@ -186,40 +176,85 @@ function renderImages() {
     images.splice(+b.dataset.i, 1); renderImages();
   });
 }
-
-/* ================= 正文编辑器 ================= */
+/* ================= 正文编辑器【重构换行段落模块】 ================= */
 const editor = $('#letter-editor');
 
-function editorGetText() {
-  const paras = editor.querySelectorAll('p');
-  if (paras.length) return [...paras].map(p => p.textContent).join('\n');
-  return editor.innerText;
+/**
+ * 从contenteditable读取段落数组，每一段为纯文本，保留空段落，消除&nbsp;干扰
+ * 返回 string[]
+ */
+function editorGetParagraphs() {
+  const paras = [];
+  const childNodes = Array.from(editor.childNodes);
+  for(const n of childNodes){
+    if(n.nodeName === 'P'){
+      let txt = n.innerText || '';
+      // 将不间断空格全部替换为普通空格
+      txt = txt.replace(/\u00A0/g, ' ');
+      paras.push(txt);
+    }else if(n.nodeName === 'DIV'){
+      // 兼容浏览器原生回车生成div的情况
+      let txt = n.innerText || '';
+      txt = txt.replace(/\u00A0/g, ' ');
+      paras.push(txt);
+    }else if(n.nodeType === Node.TEXT_NODE){
+      // 顶层文本节点兜底
+      const lines = n.textContent.split('\n');
+      for(const line of lines) paras.push(line.replace(/\u00A0/g,' '));
+    }
+  }
+  return paras;
 }
-function editorSetText(text) {
+
+/**
+ * 将段落数组渲染回contenteditable，每一段一个<p>，空段落保留，用于显示空行
+ * @param {string[]} paragraphs
+ */
+function editorSetParagraphs(paragraphs) {
   editor.innerHTML = '';
-  const lines = String(text || '').split(/\n/);
-  lines.forEach(l => {
+  paragraphs.forEach(line => {
     const p = document.createElement('p');
-    p.textContent = l || '\u00A0';
+    // 空段落插入br保证高度，非空直接文本
+    if(line === ''){
+      p.innerHTML = '<br>';
+    }else{
+      p.textContent = line;
+    }
     editor.appendChild(p);
   });
 }
+
+// 旧接口兼容，返回拼接大字符串（用于草稿、字符计数）
+function editorGetText() {
+  return editorGetParagraphs().join('\n');
+}
+function editorSetText(text) {
+  const lines = String(text ?? '').split('\n');
+  editorSetParagraphs(lines);
+}
+
+// Enter回车：生成新p段落，shift+enter浏览器默认软换行
 editor.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
     const range = sel.getRangeAt(0);
-    const p = document.createElement('p');
-    p.innerHTML = '<br>';
+    const newP = document.createElement('p');
+    newP.innerHTML = '<br>';
     range.deleteContents();
-    range.insertNode(p);
-    range.setStart(p, 0); range.collapse(true);
-    sel.removeAllRanges(); sel.addRange(range);
+    range.insertNode(newP);
+    // 光标定位到新段落开头
+    range.setStart(newP,0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 });
+
 editor.addEventListener('input', () => {
-  const len = editorGetText().replace(/\u00A0/g,'').length;
+  const fullText = editorGetText();
+  const len = fullText.replace(/\s/g,'').length;
   $('#char-count').textContent = len;
   autoSaveDraft();
 });
@@ -231,7 +266,6 @@ function updateSignatureDate() {
     `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
 }
 updateSignatureDate();
-
 /* ================= 参数交互 ================= */
 $('#toggle-exact').onclick = () => {
   const ex = $('#exact-date'), hidden = ex.classList.contains('hidden');
@@ -265,7 +299,6 @@ $('#password').addEventListener('input', e => {
 $('#dual-mode').onchange = e => {
   $('#dual-fields').classList.toggle('hidden', !e.target.checked);
 };
-
 /* ================= 草稿 ================= */
 let draftTimer = null;
 function autoSaveDraft() {
@@ -287,7 +320,8 @@ function loadDraft() {
   if (!d) return;
   if (d.content) {
     editorSetText(d.content);
-    $('#char-count').textContent = d.content.replace(/\n/g,'').length;
+    const len = d.content.replace(/\s/g,'').length;
+    $('#char-count').textContent = len;
   }
   if (d.signature) $('#signature').value = d.signature;
   if (d.blessing) {
@@ -301,25 +335,22 @@ function loadDraft() {
   if (d.savedAt) toast('已恢复草稿');
 }
 loadDraft();
-
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
-  const content = editorGetText().trim();
+  const paragraphs = editorGetParagraphs();
+  const content = paragraphs.join('\n').trim();
   const password = $('#password').value;
   const hint = $('#hint').value.trim();
   const signature = $('#signature').value.trim();
   const useExact = !$('#exact-date').classList.contains('hidden');
   const isDual = $('#dual-mode').checked;
-
   if (!content) return toast('请先写信内容');
   if (!password || password.length < 4) return toast('密码不能为空，且至少 4 位');
-
   let pwd2 = '';
   if (isDual) {
     pwd2 = $('#password2').value;
     if (!pwd2 || pwd2.length < 4) return toast('第二人密码不能为空，且至少 4 位');
   }
-
   let unlockAt;
   if (useExact) {
     const v = $('#exact-date').value;
@@ -330,11 +361,9 @@ $('#lock-btn').onclick = async () => {
     unlockAt = Date.now() + days * 86400000;
   }
   if (unlockAt <= Date.now()) return toast('解锁时间必须晚于现在');
-
   const btn = $('#lock-btn'); btn.disabled = true; btn.textContent = '加密中…';
   try {
     const key = isDual ? combineDualKey(password, pwd2) : password;
-    const paragraphs = content.split(/\n/).map(s => s.replace(/\u00A0/g,''));
     const payload = {
       blessing: selectedBlessing,
       paragraphs,
@@ -342,17 +371,13 @@ $('#lock-btn').onclick = async () => {
       signature,
       writtenAt: Date.now()
     };
-
     // 先生成 id 和 createdAt，用于派生时间密钥
     const id = crypto.randomUUID();
     const createdAt = Date.now();
-
     // 用户密码加密（用于提前打开）
     const enc = await encrypt(JSON.stringify(payload), key);
-
     // 时间密钥加密（用于到期自动解锁）
     const autoEnc = await encrypt(JSON.stringify(payload), 'TIMEKEY::' + id + '::' + createdAt);
-
     const item = {
       id,
       createdAt,
@@ -367,7 +392,6 @@ $('#lock-btn').onclick = async () => {
     };
     if (isDual) item.hint2 = $('#hint2').value.trim();
     store.add(item);
-
     localStorage.removeItem('tc_draft');
     resetWriteForm();
     toast('🔒 已封存，到时候见');
@@ -378,7 +402,6 @@ $('#lock-btn').onclick = async () => {
     btn.disabled = false; btn.textContent = '🔒 上锁封存';
   }
 };
-
 function resetWriteForm() {
   editor.innerHTML = '';
   $('#password').value = ''; $('#hint').value = '';
@@ -393,7 +416,6 @@ function resetWriteForm() {
   images = []; renderImages();
   $('#strength-bar').className = '';
 }
-
 /* ================= 列表 ================= */
 let searchTerm = '';
 let filterTag = '';
@@ -401,12 +423,10 @@ let filterStatus = '';
 let filterSort = 'unlock-asc';
 let selectMode = false;
 const selectedIds = new Set();
-
 $('#search').addEventListener('input', e => { searchTerm = e.target.value.toLowerCase(); renderList(); });
 $('#filter-tag').addEventListener('change', e => { filterTag = e.target.value; renderList(); });
 $('#filter-status').addEventListener('change', e => { filterStatus = e.target.value; renderList(); });
 $('#filter-sort').addEventListener('change', e => { filterSort = e.target.value; renderList(); });
-
 function renderFilterTagOptions() {
   const sel = $('#filter-tag');
   const cur = sel.value;
@@ -417,12 +437,10 @@ function renderFilterTagOptions() {
     [...tags].map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
   sel.value = cur;
 }
-
 function renderList() {
   let list = store.get();
   $('#badge').textContent = list.length || '';
   $('#trash-badge').textContent = trash.get().length || '';
-
   if (searchTerm) {
     list = list.filter(it => {
       const keys = [it.hint, it.tag, it.hint2].filter(Boolean).join(' ').toLowerCase();
@@ -442,10 +460,8 @@ function renderList() {
     if (filterSort === 'unlock-desc') return b.unlockAt - a.unlockAt;
     return b.createdAt - a.createdAt;
   });
-
   const box = $('#letters');
   $('#empty').style.display = list.length ? 'none' : 'block';
-
   box.innerHTML = list.map(item => {
     const left = item.unlockAt - Date.now();
     const ready = left <= 0;
@@ -478,7 +494,6 @@ function renderList() {
         </div>
       </div>`;
   }).join('');
-
   $$('.letter').forEach(el => {
     const id = el.dataset.id;
     el.addEventListener('click', e => {
@@ -508,7 +523,6 @@ function renderList() {
     if (act === 'share') shareLetter(id);
   });
 }
-
 /* ================= 批量 ================= */
 let longPressTimer = null;
 function startLongPress(card) {
@@ -532,7 +546,6 @@ document.addEventListener('touchstart', e => {
 });
 document.addEventListener('mouseup', () => clearTimeout(longPressTimer));
 document.addEventListener('touchend', () => clearTimeout(longPressTimer));
-
 function updateBulkBar() {
   const bar = $('#bulk-bar');
   if (selectMode) {
@@ -563,7 +576,6 @@ $('#bulk-delete').onclick = () => {
   renderList(); renderTrash();
   toast('已移入回收站');
 };
-
 /* ================= 回收站 ================= */
 function moveToTrash(id) {
   const all = store.get();
@@ -619,10 +631,8 @@ $('#empty-trash').onclick = () => {
   renderTrash();
   toast('已清空');
 };
-
 /* ================= 打开信件 ================= */
 let timer = null, flipTimer = null;
-
 function openLetter(id) {
   const item = store.get().find(x => x.id === id);
   if (!item) return;
@@ -630,7 +640,6 @@ function openLetter(id) {
   if (!ready) showFlipModal(item);
   else autoOpenLetter(item);
 }
-
 /* 已到时间：自动解密展示，无需密码 */
 async function autoOpenLetter(item) {
   $('#modal').classList.remove('hidden');
@@ -649,7 +658,6 @@ async function autoOpenLetter(item) {
     showPasswordFallback(item);
   }
 }
-
 /* 兼容旧数据：显示密码输入 */
 function showPasswordFallback(item) {
   $('#modal-body').innerHTML = `
@@ -678,7 +686,6 @@ function showPasswordFallback(item) {
   });
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
-
 async function tryUnlock(item) {
   const p1 = $('#pwd1').value;
   const p2 = item.isDual ? $('#pwd2').value : '';
@@ -694,14 +701,12 @@ async function tryUnlock(item) {
     showError('密码错误，请重试');
   }
 }
-
 function showError(msg) {
   const box = $('#err-box');
   if (!box) return toast(msg);
   box.innerHTML = `<div class="error-msg">${escapeHtml(msg)}</div>`;
   setTimeout(() => { box.innerHTML = ''; }, 2600);
 }
-
 /* ================= 信封动画 ================= */
 function playEnvelopeAnimation(payload, item) {
   $('#modal-body').innerHTML = `
@@ -720,15 +725,14 @@ function playEnvelopeAnimation(payload, item) {
   };
   setTimeout(() => { if (!env.classList.contains('open')) env.click(); }, 500);
 }
-
 /* ================= 内容展示 ================= */
 function showLetterContent(payload, item) {
-  const paragraphs = payload.paragraphs || [payload.content || ''];
+  // 优先取paragraphs段落数组，兼容旧数据兜底
+  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
   const parasHtml = paragraphs
     .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
   const imagesHtml = (payload.images || []).map(src => `<img src="${src}">`).join('');
   const writtenAt = payload.writtenAt || item.createdAt;
-
   $('#modal-body').innerHTML = `
     <h2>💌 你的信</h2>
     <p class="m-sub">写于 ${fmtDate(writtenAt)}</p>
@@ -747,7 +751,6 @@ function showLetterContent(payload, item) {
     </div>
     <button class="danger-btn" id="delete-btn">删除这封信</button>
   `;
-
   $('#copy-btn').onclick = () => {
     const full = [payload.blessing, paragraphs.join('\n'),
       `—— ${payload.signature||'佚名'}`, fmtDate(writtenAt)]
@@ -759,18 +762,16 @@ function showLetterContent(payload, item) {
   $('#share-btn').onclick = () => shareLetter(item.id);
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
-
 /* ================= PDF（浏览器打印） ================= */
 function exportPDF(payload, item) {
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
   const parasHtml = paragraphs
     .map(p => `<p style="text-indent:2em;margin:0 0 8px;line-height:1.9">${escapeHtml(p) || '&nbsp;'}</p>`)
     .join('');
   const imagesHtml = (payload.images || [])
     .map(s => `<img src="${s}" style="max-width:100%;margin:10px 0;border-radius:6px">`)
     .join('');
-
   const html = `
     <div style="padding:20mm 18mm;font-family:'Noto Serif SC','Songti SC',serif;color:#222">
       ${payload.blessing ? `<div style="color:#8b6f47;letter-spacing:3px;font-size:16px;margin-bottom:16px;font-weight:600">${escapeHtml(payload.blessing)}</div>` : ''}
@@ -792,12 +793,11 @@ function exportPDF(payload, item) {
   }, 500);
   toast('在打印窗口选择"另存为 PDF"');
 }
-
 /* ================= 图片导出 ================= */
 async function exportImage(payload, item) {
   toast('生成图片中…');
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = payload.paragraphs || [payload.content || ''];
+  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
   const parasHtml = paragraphs
     .map(p => `<p style="text-indent:2em;margin:0 0 8px">${escapeHtml(p) || '&nbsp;'}</p>`)
     .join('');
@@ -823,7 +823,6 @@ async function exportImage(payload, item) {
   } catch (e) { toast('导出失败'); }
   document.body.removeChild(wrap);
 }
-
 /* ================= 分享 ================= */
 async function shareLetter(id) {
   const item = store.get().find(x => x.id === id);
@@ -848,7 +847,6 @@ async function shareLetter(id) {
     prompt('复制分享链接：', url);
   }
 }
-
 /* ================= 翻牌倒计时（只翻变化数字） ================= */
 const flipCache = {};
 function showFlipModal(item) {
@@ -859,7 +857,6 @@ function showFlipModal(item) {
     $('#flip-modal').classList.add('hidden');
     clearInterval(flipTimer);
   };
-
   // 提前解锁区
   let earlyZone = $('#early-zone');
   if (!earlyZone) {
@@ -898,12 +895,10 @@ function showFlipModal(item) {
       setTimeout(()=>$('#early-err').innerHTML='',2600);
     }
   };
-
   renderFlipClock(item);
   clearInterval(flipTimer);
   flipTimer = setInterval(() => renderFlipClock(item), 1000);
 }
-
 function renderFlipClock(item) {
   const ms = item.unlockAt - Date.now();
   const clock = $('#flip-clock');
@@ -957,7 +952,6 @@ function renderFlipClock(item) {
     flipCache[u.k] = str.split('');
   });
 }
-
 /* ================= 导出/导入 ================= */
 $('#export-btn').onclick = () => {
   const data = {
@@ -1004,7 +998,6 @@ $('#import-file').onchange = e => {
   r.readAsText(f);
   e.target.value = '';
 };
-
 /* ================= 关闭弹窗 ================= */
 function closeModal() {
   $('#modal').classList.add('hidden');
@@ -1025,7 +1018,6 @@ document.addEventListener('keydown', e => {
     clearInterval(flipTimer);
   }
 });
-
 /* ================= 初始化 ================= */
 renderList();
 renderTrash();
