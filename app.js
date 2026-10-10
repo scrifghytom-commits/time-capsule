@@ -362,14 +362,10 @@ loadDraft();
 
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
-  const content = editorGetText().trim();
-  const password = $('#password').value;
-  const hint = $('#hint').value.trim();
-  const signature = $('#signature').value.trim();
-  const useExact = !$('#exact-date').classList.contains('hidden');
-  const isDual = $('#dual-mode').checked;
-
-  if (!content) return toast('请先写信内容');
+  const raw = editorGetText();                 // 不再 trim
+  const content = raw;
+  if (!content.replace(/\s/g, '')) return toast('请先写信内容');
+  
   if (!password || password.length < 4) return toast('密码不能为空，且至少 4 位');
 
   let pwd2 = '';
@@ -391,16 +387,15 @@ $('#lock-btn').onclick = async () => {
 
   const btn = $('#lock-btn'); btn.disabled = true; btn.textContent = '加密中…';
   try {
-    const key = isDual ? combineDualKey(password, pwd2) : password;
-    const paragraphs = content.split(/\n/).map(s => s.replace(/\u00A0/g,''));
-    const payload = {
-      blessing: selectedBlessing,
-      paragraphs,
-      images,
-      signature,
-      writtenAt: Date.now()
-    };
-
+   const key = isDual ? combineDualKey(password, pwd2) : password;
+const paragraphs = raw.split('\n').map(s => s.replace(/\u00A0/g, ''));
+const payload = {
+  blessing: selectedBlessing,
+  paragraphs,
+  images,
+  signature,
+  writtenAt: Date.now()
+};
     // 先生成 id 和 createdAt，用于派生时间密钥
     const id = crypto.randomUUID();
     const createdAt = Date.now();
