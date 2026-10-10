@@ -176,76 +176,47 @@ function renderImages() {
     images.splice(+b.dataset.i, 1); renderImages();
   });
 }
-/* ================= 正文编辑器【重构换行段落模块】 ================= */
+/* ================= 正文编辑器【重构段落获取与回车逻辑】 ================= */
 const editor = $('#letter-editor');
 
-/**
- * 从contenteditable读取段落数组，每一段为纯文本，保留空段落，消除&nbsp;干扰
- * 返回 string[]
- */
+/** 获取编辑器段落数组，每一项为一段纯文本，去除&nbsp; */
 function editorGetParagraphs() {
-  const paras = [];
-  const childNodes = Array.from(editor.childNodes);
-  for(const n of childNodes){
-    if(n.nodeName === 'P'){
-      let txt = n.innerText || '';
-      // 将不间断空格全部替换为普通空格
-      txt = txt.replace(/\u00A0/g, ' ');
-      paras.push(txt);
-    }else if(n.nodeName === 'DIV'){
-      // 兼容浏览器原生回车生成div的情况
-      let txt = n.innerText || '';
-      txt = txt.replace(/\u00A0/g, ' ');
-      paras.push(txt);
-    }else if(n.nodeType === Node.TEXT_NODE){
-      // 顶层文本节点兜底
-      const lines = n.textContent.split('\n');
-      for(const line of lines) paras.push(line.replace(/\u00A0/g,' '));
-    }
-  }
-  return paras;
+  const paras = [...editor.querySelectorAll('p')];
+  return paras.map(p => p.innerText.replace(/\u00A0/g, '')).filter(s => true);
 }
 
-/**
- * 将段落数组渲染回contenteditable，每一段一个<p>，空段落保留，用于显示空行
- * @param {string[]} paragraphs
- */
-function editorSetParagraphs(paragraphs) {
+/** 获取总字符数用于计数显示 */
+function editorGetText() {
+  return editorGetParagraphs().join('\n');
+}
+
+/** 设置编辑器内容，根据段落数组渲染p标签 */
+function editorSetText(text) {
   editor.innerHTML = '';
-  paragraphs.forEach(line => {
+  const lines = String(text || '').split(/\n/);
+  lines.forEach(l => {
     const p = document.createElement('p');
-    // 空段落插入br保证高度，非空直接文本
-    if(line === ''){
-      p.innerHTML = '<br>';
-    }else{
-      p.textContent = line;
-    }
+    p.textContent = l || '\u00A0';
     editor.appendChild(p);
   });
 }
 
-// 旧接口兼容，返回拼接大字符串（用于草稿、字符计数）
-function editorGetText() {
-  return editorGetParagraphs().join('\n');
-}
-function editorSetText(text) {
-  const lines = String(text ?? '').split('\n');
-  editorSetParagraphs(lines);
-}
-
-// Enter回车：生成新p段落，shift+enter浏览器默认软换行
+// 修复回车：只创建平级p，禁止嵌套p
 editor.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
     const range = sel.getRangeAt(0);
+
+    // 新建段落，直接插入，不要嵌套
     const newP = document.createElement('p');
-    newP.innerHTML = '<br>';
+    newP.textContent = '\u00A0';
     range.deleteContents();
     range.insertNode(newP);
-    // 光标定位到新段落开头
-    range.setStart(newP,0);
+
+    // 将光标定位到新段落开头
+    range.setStart(newP, 0);
     range.collapse(true);
     sel.removeAllRanges();
     sel.addRange(range);
@@ -253,12 +224,10 @@ editor.addEventListener('keydown', e => {
 });
 
 editor.addEventListener('input', () => {
-  const fullText = editorGetText();
-  const len = fullText.replace(/\s/g,'').length;
+  const len = editorGetText().replace(/\u00A0/g,'').length;
   $('#char-count').textContent = len;
   autoSaveDraft();
 });
-
 /* ================= 落款日期 ================= */
 function updateSignatureDate() {
   const now = new Date();
@@ -320,8 +289,7 @@ function loadDraft() {
   if (!d) return;
   if (d.content) {
     editorSetText(d.content);
-    const len = d.content.replace(/\s/g,'').length;
-    $('#char-count').textContent = len;
+    $('#char-count').textContent = d.content.replace(/\n/g,'').length;
   }
   if (d.signature) $('#signature').value = d.signature;
   if (d.blessing) {
@@ -338,13 +306,13 @@ loadDraft();
 /* ================= 上锁 ================= */
 $('#lock-btn').onclick = async () => {
   const paragraphs = editorGetParagraphs();
-  const content = paragraphs.join('\n').trim();
+  const contentText = paragraphs.join('\n').trim();
   const password = $('#password').value;
   const hint = $('#hint').value.trim();
   const signature = $('#signature').value.trim();
   const useExact = !$('#exact-date').classList.contains('hidden');
   const isDual = $('#dual-mode').checked;
-  if (!content) return toast('请先写信内容');
+  if (!contentText) return toast('请先写信内容');
   if (!password || password.length < 4) return toast('密码不能为空，且至少 4 位');
   let pwd2 = '';
   if (isDual) {
@@ -725,10 +693,9 @@ function playEnvelopeAnimation(payload, item) {
   };
   setTimeout(() => { if (!env.classList.contains('open')) env.click(); }, 500);
 }
-/* ================= 内容展示 ================= */
+/* ================= 内容展示【修复段落渲染，逐条渲染p标签】 ================= */
 function showLetterContent(payload, item) {
-  // 优先取paragraphs段落数组，兼容旧数据兜底
-  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
+  const paragraphs = payload.paragraphs || [];
   const parasHtml = paragraphs
     .map(p => `<p>${escapeHtml(p) || '&nbsp;'}</p>`).join('');
   const imagesHtml = (payload.images || []).map(src => `<img src="${src}">`).join('');
@@ -762,10 +729,10 @@ function showLetterContent(payload, item) {
   $('#share-btn').onclick = () => shareLetter(item.id);
   $('#delete-btn').onclick = () => { closeModal(); moveToTrash(item.id); };
 }
-/* ================= PDF（浏览器打印） ================= */
+/* ================= PDF（浏览器打印）【修复段落渲染】 ================= */
 function exportPDF(payload, item) {
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
+  const paragraphs = payload.paragraphs || [];
   const parasHtml = paragraphs
     .map(p => `<p style="text-indent:2em;margin:0 0 8px;line-height:1.9">${escapeHtml(p) || '&nbsp;'}</p>`)
     .join('');
@@ -793,11 +760,11 @@ function exportPDF(payload, item) {
   }, 500);
   toast('在打印窗口选择"另存为 PDF"');
 }
-/* ================= 图片导出 ================= */
+/* ================= 图片导出【修复段落渲染】 ================= */
 async function exportImage(payload, item) {
   toast('生成图片中…');
   const writtenAt = payload.writtenAt || item.createdAt;
-  const paragraphs = Array.isArray(payload.paragraphs) ? payload.paragraphs : (payload.content || '').split('\n');
+  const paragraphs = payload.paragraphs || [];
   const parasHtml = paragraphs
     .map(p => `<p style="text-indent:2em;margin:0 0 8px">${escapeHtml(p) || '&nbsp;'}</p>`)
     .join('');
